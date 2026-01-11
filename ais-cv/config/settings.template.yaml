@@ -1,0 +1,60 @@
+# AIS CV Configuration Template
+# Copy this to settings.yaml and fill in your values
+# DO NOT commit settings.yaml - it contains credentials!
+
+# Camera Configuration
+camera:
+  name: "Furnace Opening"
+  id: "CAM-1"
+  role: "primary"
+  
+  # Dahua NVR RTSP URL (Sub Stream for processing)
+  # Replace USER, PASSWORD, NVR_IP with actual values
+  rtsp_url: "rtsp://USER:PASSWORD@NVR_IP:554/cam/realmonitor?channel=1&subtype=1"
+  
+  # Stream settings (match NVR config)
+  resolution: [704, 576]
+  fps: 25
+  codec: "h265"
+  
+  # Reconnection settings
+  reconnect_attempts: 5
+  reconnect_delay_seconds: 5
+
+# Region of Interest (to be calibrated with actual camera view)
+roi:
+  furnace_door:
+    x: 100
+    y: 50
+    width: 500
+    height: 400
+  # Will be refined during calibration
+
+# Detection Thresholds (to be tuned during validation)
+detection:
+  # Luminosity (0-255) - hot steel glows bright
+  luminosity_threshold: 180
+  luminosity_min_pixels: 1000  # Minimum bright pixels to count as "hot stock"
+  
+  # Motion detection
+  motion_threshold: 25         # Pixel difference threshold
+  motion_min_area: 500         # Minimum changed area
+  
+  # State timing
+  break_threshold_seconds: 120  # 2 minutes without stock = BREAK
+  min_run_duration_seconds: 10  # Ignore very brief detections
+  
+  # Processing
+  process_fps: 1               # Analyze 1 frame per second (sufficient)
+
+# Photo Capture
+photos:
+  output_dir: "data/photos"
+  on_state_change: true
+  periodic_interval_seconds: 300  # Every 5 minutes during states
+  
+# Logging
+logging:
+  output_dir: "data/logs"
+  level: "INFO"
+  rotation: "daily"

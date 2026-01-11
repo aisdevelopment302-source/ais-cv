@@ -1,0 +1,1399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AIS Design Directions — Visual Exploration</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            /* Brand Colors */
+            --aa-orange: #E08540;
+            --aa-orange-dark: #C04830;
+            --aa-orange-light: #F5C19B;
+            --aa-navy: #1A3A5C;
+            --aa-navy-light: #5280A7;
+            
+            /* Semantic Colors */
+            --success: #16B364;
+            --success-light: #72E3A3;
+            --warning: #FFB020;
+            --warning-light: #FFD049;
+            --error: #F04438;
+            --error-light: #F97970;
+            --info: #15B79F;
+            
+            /* Neutrals */
+            --neutral-50: #FBFCFE;
+            --neutral-100: #F0F4F8;
+            --neutral-200: #DDE7EE;
+            --neutral-400: #9FA6AD;
+            --neutral-700: #32383E;
+            --neutral-900: #121517;
+            
+            /* Dark Mode */
+            --dark-bg: #121517;
+            --dark-surface: #1E2329;
+            --dark-elevated: #2A2F36;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Inter', 'Noto Sans Devanagari', sans-serif;
+            background: var(--neutral-100);
+            color: var(--neutral-900);
+            line-height: 1.5;
+        }
+        
+        /* Navigation */
+        .nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: var(--aa-navy);
+            color: white;
+            padding: 16px 24px;
+            z-index: 1000;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .nav h1 {
+            font-size: 20px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .nav-controls {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .nav-btn {
+            padding: 8px 16px;
+            border: 1px solid rgba(255,255,255,0.3);
+            background: transparent;
+            color: white;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .nav-btn:hover, .nav-btn.active {
+            background: var(--aa-orange);
+            border-color: var(--aa-orange);
+        }
+        
+        /* Main Layout */
+        .container {
+            margin-top: 72px;
+            padding: 24px;
+        }
+        
+        .intro {
+            max-width: 800px;
+            margin: 0 auto 32px;
+            text-align: center;
+            padding: 32px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        
+        .intro h2 {
+            color: var(--aa-navy);
+            margin-bottom: 16px;
+        }
+        
+        .intro p {
+            color: var(--neutral-700);
+        }
+        
+        /* Direction Cards */
+        .directions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 24px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .direction-card {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .direction-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+        }
+        
+        .direction-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--neutral-200);
+        }
+        
+        .direction-header h3 {
+            font-size: 18px;
+            color: var(--aa-navy);
+            margin-bottom: 4px;
+        }
+        
+        .direction-header p {
+            font-size: 14px;
+            color: var(--neutral-700);
+        }
+        
+        .direction-preview {
+            height: 300px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .direction-footer {
+            padding: 16px 20px;
+            background: var(--neutral-50);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .tag {
+            display: inline-block;
+            padding: 4px 10px;
+            background: var(--aa-orange-light);
+            color: var(--aa-orange-dark);
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        
+        /* ==================== */
+        /* DIRECTION 1: Industrial Warmth */
+        /* ==================== */
+        .d1-preview {
+            background: var(--neutral-50);
+            display: flex;
+        }
+        
+        .d1-sidebar {
+            width: 60px;
+            background: var(--aa-navy);
+            padding: 16px 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+        }
+        
+        .d1-nav-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            background: rgba(255,255,255,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 18px;
+        }
+        
+        .d1-nav-icon.active {
+            background: var(--aa-orange);
+        }
+        
+        .d1-content {
+            flex: 1;
+            padding: 16px;
+        }
+        
+        .d1-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        
+        .d1-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--aa-navy);
+        }
+        
+        .d1-cards {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+        
+        .d1-card {
+            background: white;
+            border-radius: 8px;
+            padding: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        
+        .d1-card-title {
+            font-size: 11px;
+            color: var(--neutral-400);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        
+        .d1-card-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--aa-navy);
+        }
+        
+        .d1-card-trend {
+            font-size: 12px;
+            color: var(--success);
+            margin-top: 4px;
+        }
+        
+        .d1-btn {
+            padding: 10px 20px;
+            background: var(--aa-orange);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 500;
+            font-size: 13px;
+        }
+        
+        /* ==================== */
+        /* DIRECTION 2: Data Dashboard */
+        /* ==================== */
+        .d2-preview {
+            background: #FAFAFA;
+            padding: 12px;
+            font-size: 12px;
+        }
+        
+        .d2-toolbar {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--neutral-200);
+        }
+        
+        .d2-toolbar-btn {
+            padding: 6px 12px;
+            background: white;
+            border: 1px solid var(--neutral-200);
+            border-radius: 4px;
+            font-size: 11px;
+            color: var(--neutral-700);
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .d2-shortcut {
+            background: var(--neutral-100);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            color: var(--neutral-400);
+        }
+        
+        .d2-table {
+            background: white;
+            border: 1px solid var(--neutral-200);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .d2-table-header {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr 80px;
+            background: var(--neutral-100);
+            padding: 8px 12px;
+            font-weight: 600;
+            font-size: 11px;
+            color: var(--neutral-700);
+            text-transform: uppercase;
+        }
+        
+        .d2-table-row {
+            display: grid;
+            grid-template-columns: 2fr 1fr 1fr 1fr 80px;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--neutral-100);
+            align-items: center;
+        }
+        
+        .d2-status {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 3px;
+            font-size: 10px;
+            font-weight: 500;
+        }
+        
+        .d2-status.loaded { background: #E6F9EE; color: #087442; }
+        .d2-status.pending { background: #FFF4E5; color: #B84D05; }
+        .d2-status.blocked { background: #FEEBE9; color: #BB241A; }
+        
+        /* ==================== */
+        /* DIRECTION 3: Good News First */
+        /* ==================== */
+        .d3-preview {
+            background: linear-gradient(135deg, #FFF8F0 0%, #FEFEFE 100%);
+            padding: 16px;
+        }
+        
+        .d3-celebration {
+            background: linear-gradient(135deg, var(--success) 0%, #10A050 100%);
+            border-radius: 12px;
+            padding: 20px;
+            color: white;
+            text-align: center;
+            margin-bottom: 16px;
+        }
+        
+        .d3-celebration-icon {
+            font-size: 32px;
+            margin-bottom: 8px;
+        }
+        
+        .d3-celebration-value {
+            font-size: 36px;
+            font-weight: 700;
+        }
+        
+        .d3-celebration-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        
+        .d3-progress-section {
+            background: white;
+            border-radius: 8px;
+            padding: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        
+        .d3-progress-title {
+            font-size: 13px;
+            color: var(--neutral-700);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .d3-progress-bar {
+            height: 12px;
+            background: var(--neutral-100);
+            border-radius: 6px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+        
+        .d3-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--aa-orange) 0%, var(--aa-orange-dark) 100%);
+            border-radius: 6px;
+            width: 72%;
+        }
+        
+        .d3-progress-stats {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: var(--neutral-700);
+        }
+        
+        /* ==================== */
+        /* DIRECTION 4: Clean Modular */
+        /* ==================== */
+        .d4-preview {
+            background: white;
+            padding: 20px;
+        }
+        
+        .d4-step-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-bottom: 24px;
+        }
+        
+        .d4-step {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        
+        .d4-step.complete {
+            background: var(--success);
+            color: white;
+        }
+        
+        .d4-step.current {
+            background: var(--aa-orange);
+            color: white;
+        }
+        
+        .d4-step.pending {
+            background: var(--neutral-200);
+            color: var(--neutral-400);
+        }
+        
+        .d4-step-line {
+            width: 40px;
+            height: 2px;
+            background: var(--neutral-200);
+        }
+        
+        .d4-step-line.complete {
+            background: var(--success);
+        }
+        
+        .d4-form-card {
+            border: 2px solid var(--neutral-200);
+            border-radius: 12px;
+            padding: 24px;
+        }
+        
+        .d4-form-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--aa-navy);
+            margin-bottom: 20px;
+        }
+        
+        .d4-input-group {
+            margin-bottom: 16px;
+        }
+        
+        .d4-label {
+            display: block;
+            font-size: 13px;
+            color: var(--neutral-700);
+            margin-bottom: 6px;
+        }
+        
+        .d4-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid var(--neutral-200);
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        
+        /* ==================== */
+        /* DIRECTION 5: Control Tower */
+        /* ==================== */
+        .d5-preview {
+            background: var(--dark-bg);
+            padding: 16px;
+            color: white;
+        }
+        
+        .d5-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        
+        .d5-live-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--success);
+        }
+        
+        .d5-live-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .d5-metrics {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+        }
+        
+        .d5-metric {
+            background: var(--dark-surface);
+            border-radius: 8px;
+            padding: 16px;
+            border: 1px solid var(--dark-elevated);
+        }
+        
+        .d5-metric-label {
+            font-size: 11px;
+            color: var(--neutral-400);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        
+        .d5-metric-value {
+            font-size: 28px;
+            font-weight: 700;
+        }
+        
+        .d5-metric-value.success { color: var(--success); }
+        .d5-metric-value.warning { color: var(--warning); }
+        .d5-metric-value.orange { color: var(--aa-orange); }
+        
+        .d5-alert-bar {
+            background: rgba(240, 68, 56, 0.15);
+            border: 1px solid var(--error);
+            border-radius: 6px;
+            padding: 10px 14px;
+            margin-top: 12px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+        }
+        
+        /* ==================== */
+        /* DIRECTION 6: Bilingual Native */
+        /* ==================== */
+        .d6-preview {
+            background: linear-gradient(180deg, #FDF8F3 0%, #FFFFFF 100%);
+            padding: 16px;
+        }
+        
+        .d6-header-block {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        .d6-hindi-title {
+            font-family: 'Noto Sans Devanagari', sans-serif;
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--aa-navy);
+            margin-bottom: 4px;
+        }
+        
+        .d6-english-subtitle {
+            font-size: 12px;
+            color: var(--neutral-400);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .d6-action-card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+            border-left: 4px solid var(--aa-orange);
+        }
+        
+        .d6-bilingual-label {
+            margin-bottom: 12px;
+        }
+        
+        .d6-hindi {
+            font-family: 'Noto Sans Devanagari', sans-serif;
+            font-size: 16px;
+            color: var(--neutral-900);
+        }
+        
+        .d6-english {
+            font-size: 13px;
+            color: var(--neutral-400);
+        }
+        
+        .d6-big-btn {
+            width: 100%;
+            padding: 20px;
+            background: var(--aa-orange);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 18px;
+            font-weight: 600;
+            margin-top: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        .d6-btn-hindi {
+            font-family: 'Noto Sans Devanagari', sans-serif;
+            font-size: 20px;
+        }
+        
+        .d6-btn-english {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+        
+        /* ==================== */
+        /* TIER COMPARISON SECTION */
+        /* ==================== */
+        .tier-section {
+            max-width: 1400px;
+            margin: 48px auto;
+            padding: 0 24px;
+        }
+        
+        .tier-section h2 {
+            text-align: center;
+            color: var(--aa-navy);
+            margin-bottom: 32px;
+        }
+        
+        .tier-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+        }
+        
+        .tier-card {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        
+        .tier-card-header {
+            padding: 16px 20px;
+            background: var(--aa-navy);
+            color: white;
+        }
+        
+        .tier-card-header h4 {
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+        
+        .tier-card-header p {
+            font-size: 12px;
+            opacity: 0.8;
+        }
+        
+        .tier-card-body {
+            padding: 20px;
+        }
+        
+        .tier-feature {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        
+        .tier-feature-icon {
+            width: 24px;
+            height: 24px;
+            background: var(--aa-orange-light);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            flex-shrink: 0;
+        }
+        
+        .tier-feature-text {
+            font-size: 13px;
+            color: var(--neutral-700);
+        }
+        
+        /* ==================== */
+        /* COMPONENT COMPARISON */
+        /* ==================== */
+        .component-section {
+            max-width: 1400px;
+            margin: 48px auto;
+            padding: 0 24px;
+        }
+        
+        .component-section h2 {
+            text-align: center;
+            color: var(--aa-navy);
+            margin-bottom: 32px;
+        }
+        
+        .component-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 24px;
+        }
+        
+        .component-card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        
+        .component-card h4 {
+            font-size: 14px;
+            color: var(--aa-navy);
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--neutral-200);
+        }
+        
+        /* Button Variations */
+        .btn-primary {
+            display: block;
+            width: 100%;
+            padding: 12px 20px;
+            background: var(--aa-orange);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 14px;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+        
+        .btn-secondary {
+            display: block;
+            width: 100%;
+            padding: 12px 20px;
+            background: white;
+            color: var(--aa-navy);
+            border: 2px solid var(--aa-navy);
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 14px;
+            margin-bottom: 8px;
+            text-align: center;
+        }
+        
+        .btn-ghost {
+            display: block;
+            width: 100%;
+            padding: 12px 20px;
+            background: transparent;
+            color: var(--aa-orange);
+            border: none;
+            font-weight: 500;
+            font-size: 14px;
+            text-align: center;
+        }
+        
+        /* Status Badges */
+        .status-row {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 12px;
+        }
+        
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        
+        .status-badge.success {
+            background: #E6F9EE;
+            color: #087442;
+        }
+        
+        .status-badge.warning {
+            background: #FFF4E5;
+            color: #B84D05;
+        }
+        
+        .status-badge.error {
+            background: #FEEBE9;
+            color: #BB241A;
+        }
+        
+        .status-badge.info {
+            background: #E5F6F4;
+            color: #0E9382;
+        }
+        
+        .status-shape {
+            width: 8px;
+            height: 8px;
+        }
+        
+        .status-shape.circle { border-radius: 50%; background: currentColor; }
+        .status-shape.triangle { 
+            width: 0; height: 0;
+            border-left: 5px solid transparent;
+            border-right: 5px solid transparent;
+            border-bottom: 8px solid currentColor;
+        }
+        .status-shape.octagon { 
+            width: 10px; height: 10px;
+            background: currentColor;
+            clip-path: polygon(30% 0%, 70% 0%, 100% 30%, 100% 70%, 70% 100%, 30% 100%, 0% 70%, 0% 30%);
+        }
+        
+        /* Input Variations */
+        .input-demo {
+            margin-bottom: 12px;
+        }
+        
+        .input-label {
+            display: block;
+            font-size: 12px;
+            color: var(--neutral-700);
+            margin-bottom: 6px;
+        }
+        
+        .input-field {
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid var(--neutral-200);
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        .input-field:focus {
+            outline: none;
+            border-color: var(--aa-orange);
+            box-shadow: 0 0 0 3px var(--aa-orange-light);
+        }
+        
+        .input-field.error {
+            border-color: var(--error);
+        }
+        
+        .input-helper {
+            font-size: 11px;
+            color: var(--neutral-400);
+            margin-top: 4px;
+        }
+        
+        .input-helper.error {
+            color: var(--error);
+        }
+        
+        /* Card Variations */
+        .card-demo {
+            border: 1px solid var(--neutral-200);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 12px;
+        }
+        
+        .card-demo.elevated {
+            border: none;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        
+        .card-demo.accent {
+            border-left: 4px solid var(--aa-orange);
+        }
+        
+        .card-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--aa-navy);
+            margin-bottom: 4px;
+        }
+        
+        .card-subtitle {
+            font-size: 12px;
+            color: var(--neutral-400);
+        }
+        
+        /* Footer */
+        .footer {
+            text-align: center;
+            padding: 48px 24px;
+            background: var(--aa-navy);
+            color: white;
+            margin-top: 48px;
+        }
+        
+        .footer h3 {
+            margin-bottom: 16px;
+        }
+        
+        .footer p {
+            opacity: 0.8;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+    </style>
+</head>
+<body>
+    <nav class="nav">
+        <h1>
+            <span style="color: var(--aa-orange);">●</span>
+            AIS Design Directions
+        </h1>
+        <div class="nav-controls">
+            <button class="nav-btn active" onclick="scrollTo('directions')">Directions</button>
+            <button class="nav-btn" onclick="scrollTo('tiers')">Tier Comparison</button>
+            <button class="nav-btn" onclick="scrollTo('components')">Components</button>
+        </div>
+    </nav>
+    
+    <div class="container">
+        <div class="intro">
+            <h2>🎨 Visual Design Exploration for AIS</h2>
+            <p>Explore 6 distinct design directions, each representing a complete visual approach for the Aadinath Information System. Consider how each direction serves your three-tier architecture: Workers (Tier 1), Operations (Tier 2), and Strategic (Tier 3).</p>
+        </div>
+        
+        <div id="directions" class="directions-grid">
+            <!-- Direction 1: Industrial Warmth -->
+            <div class="direction-card">
+                <div class="direction-header">
+                    <h3>Direction 1: Industrial Warmth</h3>
+                    <p>Warm, approachable, but factory-ready. Orange as hero accent.</p>
+                </div>
+                <div class="direction-preview d1-preview">
+                    <div class="d1-sidebar">
+                        <div class="d1-nav-icon active">📊</div>
+                        <div class="d1-nav-icon">📦</div>
+                        <div class="d1-nav-icon">🚛</div>
+                        <div class="d1-nav-icon">👥</div>
+                    </div>
+                    <div class="d1-content">
+                        <div class="d1-header">
+                            <span class="d1-title">Owner Dashboard</span>
+                            <button class="d1-btn">+ New Order</button>
+                        </div>
+                        <div class="d1-cards">
+                            <div class="d1-card">
+                                <div class="d1-card-title">Production</div>
+                                <div class="d1-card-value">12.3t</div>
+                                <div class="d1-card-trend">↑ 8% vs target</div>
+                            </div>
+                            <div class="d1-card">
+                                <div class="d1-card-title">Pending</div>
+                                <div class="d1-card-value">₹4.2L</div>
+                                <div class="d1-card-trend" style="color: var(--warning);">3 overdue</div>
+                            </div>
+                            <div class="d1-card">
+                                <div class="d1-card-title">Trucks</div>
+                                <div class="d1-card-value">8/10</div>
+                                <div class="d1-card-trend">2 in queue</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="direction-footer">
+                    <span class="tag">Recommended for Tier 2-3 Web</span>
+                </div>
+            </div>
+            
+            <!-- Direction 2: Data Dashboard -->
+            <div class="direction-card">
+                <div class="direction-header">
+                    <h3>Direction 2: Data Dashboard</h3>
+                    <p>Dense, efficient, Tally-inspired. Keyboard-first navigation.</p>
+                </div>
+                <div class="direction-preview d2-preview">
+                    <div class="d2-toolbar">
+                        <div class="d2-toolbar-btn">New <span class="d2-shortcut">N</span></div>
+                        <div class="d2-toolbar-btn">Search <span class="d2-shortcut">/</span></div>
+                        <div class="d2-toolbar-btn">Print <span class="d2-shortcut">P</span></div>
+                        <div class="d2-toolbar-btn">Export <span class="d2-shortcut">E</span></div>
+                    </div>
+                    <div class="d2-table">
+                        <div class="d2-table-header">
+                            <span>Order / Customer</span>
+                            <span>Weight</span>
+                            <span>Rate</span>
+                            <span>Amount</span>
+                            <span>Status</span>
+                        </div>
+                        <div class="d2-table-row">
+                            <span><strong>WA-5678</strong> Agarwal Steel</span>
+                            <span>24,170 kg</span>
+                            <span>₹47,286</span>
+                            <span>₹11.4L</span>
+                            <span class="d2-status loaded">✓ Loaded</span>
+                        </div>
+                        <div class="d2-table-row">
+                            <span><strong>WA-5679</strong> Bharat Iron</span>
+                            <span>18,500 kg</span>
+                            <span>₹46,500</span>
+                            <span>₹8.6L</span>
+                            <span class="d2-status pending">⚠ Pending</span>
+                        </div>
+                        <div class="d2-table-row">
+                            <span><strong>WA-5680</strong> Gujarat Metals</span>
+                            <span>12,300 kg</span>
+                            <span>₹45,800</span>
+                            <span>₹5.6L</span>
+                            <span class="d2-status blocked">✗ Blocked</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="direction-footer">
+                    <span class="tag">Ideal for Office Staff</span>
+                </div>
+            </div>
+            
+            <!-- Direction 3: Good News First -->
+            <div class="direction-card">
+                <div class="direction-header">
+                    <h3>Direction 3: Good News First</h3>
+                    <p>Celebration-forward, progress-centric. Positive reinforcement.</p>
+                </div>
+                <div class="direction-preview d3-preview">
+                    <div class="d3-celebration">
+                        <div class="d3-celebration-icon">🎉</div>
+                        <div class="d3-celebration-value">12.3 tons</div>
+                        <div class="d3-celebration-label">Production today — 108% of target!</div>
+                    </div>
+                    <div class="d3-progress-section">
+                        <div class="d3-progress-title">
+                            <span style="color: var(--success);">✓</span>
+                            Shift Progress
+                        </div>
+                        <div class="d3-progress-bar">
+                            <div class="d3-progress-fill"></div>
+                        </div>
+                        <div class="d3-progress-stats">
+                            <span>8 of 11 trucks loaded</span>
+                            <span style="color: var(--success); font-weight: 600;">72% complete</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="direction-footer">
+                    <span class="tag">Emotionally Differentiated</span>
+                </div>
+            </div>
+            
+            <!-- Direction 4: Clean Modular -->
+            <div class="direction-card">
+                <div class="direction-header">
+                    <h3>Direction 4: Clean Modular</h3>
+                    <p>Minimalist, card-based, guided workflows. Maximum clarity.</p>
+                </div>
+                <div class="direction-preview d4-preview">
+                    <div class="d4-step-indicator">
+                        <div class="d4-step complete">✓</div>
+                        <div class="d4-step-line complete"></div>
+                        <div class="d4-step complete">✓</div>
+                        <div class="d4-step-line"></div>
+                        <div class="d4-step current">3</div>
+                        <div class="d4-step-line"></div>
+                        <div class="d4-step pending">4</div>
+                    </div>
+                    <div class="d4-form-card">
+                        <div class="d4-form-title">Step 3: Weighbridge Entry</div>
+                        <div class="d4-input-group">
+                            <label class="d4-label">Gross Weight (kg)</label>
+                            <input class="d4-input" type="text" placeholder="Enter gross weight">
+                        </div>
+                        <div class="d4-input-group">
+                            <label class="d4-label">Tare Weight (kg)</label>
+                            <input class="d4-input" type="text" placeholder="Enter tare weight">
+                        </div>
+                    </div>
+                </div>
+                <div class="direction-footer">
+                    <span class="tag">Best for New Users</span>
+                </div>
+            </div>
+            
+            <!-- Direction 5: Control Tower -->
+            <div class="direction-card">
+                <div class="direction-header">
+                    <h3>Direction 5: Control Tower</h3>
+                    <p>Dark mode, command-center aesthetic. Real-time monitoring.</p>
+                </div>
+                <div class="direction-preview d5-preview">
+                    <div class="d5-header">
+                        <span style="font-weight: 600;">Live Operations</span>
+                        <div class="d5-live-badge">
+                            <div class="d5-live-dot"></div>
+                            LIVE
+                        </div>
+                    </div>
+                    <div class="d5-metrics">
+                        <div class="d5-metric">
+                            <div class="d5-metric-label">Runtime</div>
+                            <div class="d5-metric-value success">6h 42m</div>
+                        </div>
+                        <div class="d5-metric">
+                            <div class="d5-metric-label">Production</div>
+                            <div class="d5-metric-value orange">12.3t</div>
+                        </div>
+                        <div class="d5-metric">
+                            <div class="d5-metric-label">Trucks</div>
+                            <div class="d5-metric-value">8/10</div>
+                        </div>
+                        <div class="d5-metric">
+                            <div class="d5-metric-label">Variance</div>
+                            <div class="d5-metric-value warning">1</div>
+                        </div>
+                    </div>
+                    <div class="d5-alert-bar">
+                        <span>⚠️</span>
+                        <span>Variance alert: MH-12-AB-1234 • +45kg</span>
+                    </div>
+                </div>
+                <div class="direction-footer">
+                    <span class="tag">Owner Dark Mode</span>
+                </div>
+            </div>
+            
+            <!-- Direction 6: Bilingual Native -->
+            <div class="direction-card">
+                <div class="direction-header">
+                    <h3>Direction 6: Bilingual Native</h3>
+                    <p>Hindi-first design. Cultural integration for worker comfort.</p>
+                </div>
+                <div class="direction-preview d6-preview">
+                    <div class="d6-header-block">
+                        <div class="d6-hindi-title">वज़न दर्ज करें</div>
+                        <div class="d6-english-subtitle">Log Weight</div>
+                    </div>
+                    <div class="d6-action-card">
+                        <div class="d6-bilingual-label">
+                            <div class="d6-hindi">ट्रक: MH-12-AB-1234</div>
+                            <div class="d6-english">Truck: MH-12-AB-1234</div>
+                        </div>
+                        <div class="d6-bilingual-label">
+                            <div class="d6-hindi">साइज: A 30/12 (18ft)</div>
+                            <div class="d6-english">Size: A 30/12 (18ft)</div>
+                        </div>
+                        <button class="d6-big-btn">
+                            <span class="d6-btn-hindi">✓ पुष्टि करें</span>
+                            <span class="d6-btn-english">Confirm Weight</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="direction-footer">
+                    <span class="tag">Tier 1 Mobile</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Tier Comparison Section -->
+        <section id="tiers" class="tier-section">
+            <h2>📱 Tier-Specific Design Considerations</h2>
+            <div class="tier-grid">
+                <div class="tier-card">
+                    <div class="tier-card-header">
+                        <h4>Tier 1: Workers</h4>
+                        <p>Hydra Operator • Supervisor</p>
+                    </div>
+                    <div class="tier-card-body">
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">📱</div>
+                            <div class="tier-feature-text">React Native mobile app with 56dp touch targets</div>
+                        </div>
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">🌞</div>
+                            <div class="tier-feature-text">Sunlight Mode only — high contrast, AAA ratios</div>
+                        </div>
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">🗣️</div>
+                            <div class="tier-feature-text">Bilingual labels: Hindi + English on all actions</div>
+                        </div>
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">📶</div>
+                            <div class="tier-feature-text">Offline-first with clear sync status indicators</div>
+                        </div>
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">🎯</div>
+                            <div class="tier-feature-text">3 taps max • 5 seconds per action</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="tier-card">
+                    <div class="tier-card-header">
+                        <h4>Tier 2: Operations</h4>
+                        <p>Office Staff • Production Manager</p>
+                    </div>
+                    <div class="tier-card-body">
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">💻</div>
+                            <div class="tier-feature-text">Web app built on Devias Kit Pro + MUI</div>
+                        </div>
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">⌨️</div>
+                            <div class="tier-feature-text">Keyboard-first navigation with Tally-style shortcuts</div>
+                        </div>
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">🌙</div>
+                            <div class="tier-feature-text">Light + Dark mode toggle supported</div>
+                        </div>
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">📋</div>
+                            <div class="tier-feature-text">Workflow steppers for Gate Pass, Orders</div>
+                        </div>
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">🔔</div>
+                            <div class="tier-feature-text">Inline variance alerts with resolution actions</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="tier-card">
+                    <div class="tier-card-header">
+                        <h4>Tier 3: Strategic</h4>
+                        <p>Owner • Sales & Purchase Head • Accountant</p>
+                    </div>
+                    <div class="tier-card-body">
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">📊</div>
+                            <div class="tier-feature-text">Information-dense dashboards with drill-down</div>
+                        </div>
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">✅</div>
+                            <div class="tier-feature-text">"Good News First" pattern on all dashboards</div>
+                        </div>
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">🌙</div>
+                            <div class="tier-feature-text">Dark mode for Owner's "Control Tower" view</div>
+                        </div>
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">📱</div>
+                            <div class="tier-feature-text">Owner Mobile App (MVP-Plus): Read-only + push</div>
+                        </div>
+                        <div class="tier-feature">
+                            <div class="tier-feature-icon">⏱️</div>
+                            <div class="tier-feature-text">2-minute glance target for full visibility</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- Component Comparison Section -->
+        <section id="components" class="component-section">
+            <h2>🧩 Component Library Preview</h2>
+            <div class="component-grid">
+                <div class="component-card">
+                    <h4>Buttons</h4>
+                    <button class="btn-primary">Primary Action</button>
+                    <button class="btn-secondary">Secondary</button>
+                    <button class="btn-ghost">Ghost Link</button>
+                </div>
+                
+                <div class="component-card">
+                    <h4>Status Badges (Shape + Color)</h4>
+                    <div class="status-row">
+                        <span class="status-badge success">
+                            <span class="status-shape circle"></span>
+                            ✓ Synced
+                        </span>
+                        <span class="status-badge success">
+                            <span class="status-shape circle"></span>
+                            Loaded
+                        </span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-badge warning">
+                            <span class="status-shape triangle"></span>
+                            ⚠ Pending
+                        </span>
+                        <span class="status-badge warning">
+                            <span class="status-shape triangle"></span>
+                            Variance
+                        </span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-badge error">
+                            <span class="status-shape octagon"></span>
+                            ✗ Blocked
+                        </span>
+                        <span class="status-badge error">
+                            <span class="status-shape octagon"></span>
+                            Theft Flag
+                        </span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-badge info">
+                            <span class="status-shape circle"></span>
+                            ℹ Info
+                        </span>
+                    </div>
+                </div>
+                
+                <div class="component-card">
+                    <h4>Input Fields</h4>
+                    <div class="input-demo">
+                        <label class="input-label">Weight (kg)</label>
+                        <input class="input-field" type="text" placeholder="Enter weight">
+                        <div class="input-helper">Must be multiple of 5</div>
+                    </div>
+                    <div class="input-demo">
+                        <label class="input-label">Customer</label>
+                        <input class="input-field error" type="text" value="Invalid entry">
+                        <div class="input-helper error">Customer not found</div>
+                    </div>
+                </div>
+                
+                <div class="component-card">
+                    <h4>Card Styles</h4>
+                    <div class="card-demo">
+                        <div class="card-title">Default Card</div>
+                        <div class="card-subtitle">With border</div>
+                    </div>
+                    <div class="card-demo elevated">
+                        <div class="card-title">Elevated Card</div>
+                        <div class="card-subtitle">With shadow</div>
+                    </div>
+                    <div class="card-demo accent">
+                        <div class="card-title">Accent Card</div>
+                        <div class="card-subtitle">With orange border</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+    
+    <footer class="footer">
+        <h3>🎯 Design Direction Decision</h3>
+        <p>Review all directions above, then share your preferences with Sally. Which elements resonate most for AIS? You can pick a favorite direction, combine elements from multiple, or request modifications.</p>
+    </footer>
+    
+    <script>
+        function scrollTo(id) {
+            document.getElementById(id).scrollIntoView({ behavior: 'smooth' });
+            
+            // Update active state
+            document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+    </script>
+</body>
+</html>

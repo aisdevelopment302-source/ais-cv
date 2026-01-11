@@ -1,0 +1,55 @@
+# BMAD Workflow Status Tracker
+# This file tracks the status of all BMAD workflows for this project
+
+project: AIS
+owner: Adityajain
+last_updated: 2025-12-23
+
+# Completed Workflows
+completed_workflows:
+  product-brief:
+    status: complete
+    output_file: analysis/product-brief-AIS-2025-12-20.md
+    started_date: 2025-12-20
+    completed_date: 2025-12-23
+    steps_completed: [1, 2, 3, 4, 5, 6]
+    notes: |
+      Comprehensive product brief for AIS - Rolling Mill ERP with CV integration.
+      Includes: Executive Summary, Core Vision, Target Users (6 primary, 4 secondary),
+      Success Metrics, and MVP Scope (two-phase approach).
+
+  brainstorming:
+    status: complete
+    output_file: analysis/brainstorming-session-2025-12-20.md
+    completed_date: 2025-12-20
+    notes: |
+      4-phase brainstorming session covering problem exploration, 
+      solution ideation, convergence, and action planning.
+
+# Next Recommended Workflows
+next_recommended:
+  - workflow: prd
+    reason: Create detailed Product Requirements Document from product brief
+    priority: high
+  
+  - workflow: architecture
+    reason: Define tech stack and system design before development
+    priority: high
+  
+  - workflow: ux-design
+    reason: UX research and design can run parallel with PRD
+    priority: medium
+
+# Active Workflows
+active_workflows: {}
+
+# Workflow History
+history:
+  - date: 2025-12-20
+    action: Started brainstorming session
+  - date: 2025-12-20
+    action: Completed brainstorming session (all 4 phases)
+  - date: 2025-12-20
+    action: Started product brief workflow
+  - date: 2025-12-23
+    action: Completed product brief workflow (all 6 steps)
