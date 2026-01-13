@@ -60,6 +60,7 @@ ais-cv/*.png
 
 # CV Config with credentials
 ais-cv/config/settings.yaml
+ais-cv/config/firebase-service-account.json
 
 # ===================
 # IDE & Editors

@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AIS - Review Counts</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+    import { getFirestore, doc, collection, query, where, orderBy, limit, getDocs, updateDoc, Timestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCBXxSsvjnFzGMMFbHCYouokIQydObeElo",
+      authDomain: "ais-production-e013c.firebaseapp.com",
+      projectId: "ais-production-e013c",
+      storageBucket: "ais-production-e013c.firebasestorage.app",
+      messagingSenderId: "565647781984",
+      appId: "1:565647781984:web:0f05c2436afdcc7a0b1305"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    
+    // Photo API on Raspberry Pi (local network only)
+    const PHOTO_API = 'http://192.168.1.23:5001';
+
+    // Get URL params
+    const urlParams = new URLSearchParams(window.location.search);
+    const filterDate = urlParams.get('date') || new Date().toISOString().split('T')[0];
+    const filterType = urlParams.get('filter') || 'flagged'; // 'flagged', 'low', 'all'
+
+    // Set filter state
+    document.getElementById('dateFilter').value = filterDate;
+    document.getElementById('typeFilter').value = filterType;
+    document.getElementById('currentFilter').textContent = 
+      filterType === 'flagged' ? 'Flagged' : 
+      filterType === 'low' ? 'Low Confidence (<70%)' : 'All Counts';
+
+    // Load counts based on filter
+    async function loadCounts() {
+      const countsList = document.getElementById('countsList');
+      const statsEl = document.getElementById('stats');
+      countsList.innerHTML = '<div class="text-gray-500 text-center py-8">Loading...</div>';
+      
+      try {
+        let q;
+        if (filterType === 'flagged') {
+          q = query(
+            collection(db, 'counts'),
+            where('date', '==', filterDate),
+            where('flagged', '==', true),
+            orderBy('timestamp', 'desc'),
+            limit(100)
+          );
+        } else if (filterType === 'low') {
+          q = query(
+            collection(db, 'counts'),
+            where('date', '==', filterDate),
+            where('confidence', '<', 70),
+            orderBy('confidence', 'asc'),
+            limit(100)
+          );
+        } else {
+          q = query(
+            collection(db, 'counts'),
+            where('date', '==', filterDate),
+            orderBy('timestamp', 'desc'),
+            limit(100)
+          );
+        }
+        
+        const snapshot = await getDocs(q);
+        
+        if (snapshot.empty) {
+          countsList.innerHTML = '<div class="text-gray-500 text-center py-8">No counts found for this filter</div>';
+          statsEl.textContent = '0 counts';
+          return;
+        }
+        
+        let flaggedCount = 0;
+        let lowConfCount = 0;
+        let reviewedCount = 0;
+        
+        countsList.innerHTML = '';
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          const id = docSnap.id;
+          
+          // Track stats
+          if (data.flagged) flaggedCount++;
+          if (data.confidence < 70) lowConfCount++;
+          if (data.reviewed) reviewedCount++;
+          
+          // Create card
+          const card = createCountCard(id, data);
+          countsList.appendChild(card);
+        });
+        
+        statsEl.textContent = `${snapshot.size} counts | ${flaggedCount} flagged | ${reviewedCount} reviewed`;
+        
+      } catch (error) {
+        console.error('Error loading counts:', error);
+        countsList.innerHTML = `<div class="text-red-500 text-center py-8">Error: ${error.message}</div>`;
+      }
+    }
+
+    function createCountCard(id, data) {
+      const time = data.timestamp?.toDate?.()?.toLocaleTimeString() || '--:--:--';
+      const confidence = data.confidence || 100;
+      const confClass = confidence >= 80 ? 'bg-green-600' : confidence >= 60 ? 'bg-yellow-600' : 'bg-red-600';
+      const confLabel = confidence >= 80 ? 'HIGH' : confidence >= 60 ? 'MED' : 'LOW';
+      
+      const l1Frames = data.line_frames?.L1 || '?';
+      const l2Frames = data.line_frames?.L2 || '?';
+      const l3Frames = data.line_frames?.L3 || '?';
+      
+      const l1Pixels = data.line_pixels?.L1 || '?';
+      const l2Pixels = data.line_pixels?.L2 || '?';
+      const l3Pixels = data.line_pixels?.L3 || '?';
+      
+      const travelTime = data.travel_time?.toFixed(2) || '?';
+      const photoFile = data.photo_filename || '';
+      
+      const div = document.createElement('div');
+      div.className = `bg-gray-800 rounded-lg p-4 mb-3 ${data.flagged ? 'border-l-4 border-yellow-500' : ''} ${data.reviewed ? 'opacity-60' : ''}`;
+      div.id = `card-${id}`;
+      
+      div.innerHTML = `
+        <div class="flex justify-between items-start mb-3">
+          <div>
+            <span class="text-lg font-bold">${time}</span>
+            <span class="ml-2 px-2 py-0.5 rounded text-xs ${confClass}">${confidence.toFixed(0)}% ${confLabel}</span>
+            ${data.flagged ? '<span class="ml-2 px-2 py-0.5 rounded text-xs bg-yellow-700">FLAGGED</span>' : ''}
+            ${data.reviewed ? '<span class="ml-2 px-2 py-0.5 rounded text-xs bg-blue-700">REVIEWED</span>' : ''}
+          </div>
+          <span class="text-gray-500 text-sm">Travel: ${travelTime}s</span>
+        </div>
+        
+        <!-- Detection Details -->
+        <div class="grid grid-cols-3 gap-2 mb-3 text-sm">
+          <div class="bg-gray-700 rounded p-2">
+            <div class="text-green-400 font-medium">L1</div>
+            <div class="text-gray-300">${l1Frames} frames</div>
+            <div class="text-gray-500">${l1Pixels} px</div>
+          </div>
+          <div class="bg-gray-700 rounded p-2">
+            <div class="text-yellow-400 font-medium">L2</div>
+            <div class="text-gray-300">${l2Frames} frames</div>
+            <div class="text-gray-500">${l2Pixels} px</div>
+          </div>
+          <div class="bg-gray-700 rounded p-2">
+            <div class="text-red-400 font-medium">L3</div>
+            <div class="text-gray-300">${l3Frames} frames</div>
+            <div class="text-gray-500">${l3Pixels} px</div>
+          </div>
+        </div>
+        
+        <!-- Photo -->
+        ${photoFile ? `
+        <div class="mb-3">
+          <img id="photo-${id}" 
+               src="${PHOTO_API}/api/photos/${photoFile}" 
+               alt="Count photo" 
+               class="w-full rounded cursor-pointer"
+               onclick="window.toggleFullscreen('photo-${id}')"
+               onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"
+          />
+          <div class="text-gray-500 text-sm text-center py-2 hidden">Photo unavailable (connect to local network)</div>
+        </div>
+        ` : '<div class="text-gray-500 text-sm mb-3">No photo available</div>'}
+        
+        <!-- Actions -->
+        <div class="flex gap-2">
+          <button onclick="window.markFalsePositive('${id}')" 
+                  class="flex-1 px-3 py-2 bg-red-700 hover:bg-red-600 rounded text-sm">
+            False Positive
+          </button>
+          <button onclick="window.markCorrect('${id}')" 
+                  class="flex-1 px-3 py-2 bg-green-700 hover:bg-green-600 rounded text-sm">
+            Correct
+          </button>
+        </div>
+      `;
+      
+      return div;
+    }
+
+    // Mark as false positive (flags it and sets reviewed)
+    window.markFalsePositive = async function(id) {
+      try {
+        const countRef = doc(db, 'counts', id);
+        await updateDoc(countRef, {
+          flagged: true,
+          reviewed: true,
+          review_result: 'false_positive',
+          reviewed_at: Timestamp.now()
+        });
+        
+        // Update UI
+        const card = document.getElementById(`card-${id}`);
+        if (card) {
+          card.classList.add('opacity-60', 'border-red-500');
+          card.classList.remove('border-yellow-500');
+        }
+        
+        alert('Marked as FALSE POSITIVE');
+      } catch (err) {
+        console.error('Error marking false positive:', err);
+        alert('Error: ' + err.message);
+      }
+    };
+
+    // Mark as correct (removes flag and sets reviewed)
+    window.markCorrect = async function(id) {
+      try {
+        const countRef = doc(db, 'counts', id);
+        await updateDoc(countRef, {
+          flagged: false,
+          reviewed: true,
+          review_result: 'correct',
+          reviewed_at: Timestamp.now()
+        });
+        
+        // Update UI
+        const card = document.getElementById(`card-${id}`);
+        if (card) {
+          card.classList.add('opacity-60');
+          card.classList.remove('border-yellow-500', 'border-red-500');
+        }
+        
+        alert('Marked as CORRECT');
+      } catch (err) {
+        console.error('Error marking correct:', err);
+        alert('Error: ' + err.message);
+      }
+    };
+
+    // Toggle fullscreen photo
+    window.toggleFullscreen = function(imgId) {
+      const img = document.getElementById(imgId);
+      if (!img) return;
+      
+      if (img.classList.contains('fixed')) {
+        img.classList.remove('fixed', 'inset-0', 'z-50', 'object-contain', 'bg-black', 'p-4', 'max-h-screen');
+        img.classList.add('w-full');
+      } else {
+        img.classList.add('fixed', 'inset-0', 'z-50', 'object-contain', 'bg-black', 'p-4', 'max-h-screen');
+        img.classList.remove('w-full');
+      }
+    };
+
+    // Apply filters
+    window.applyFilters = function() {
+      const date = document.getElementById('dateFilter').value;
+      const type = document.getElementById('typeFilter').value;
+      window.location.href = `review.html?date=${date}&filter=${type}`;
+    };
+
+    // Load on page ready
+    document.addEventListener('DOMContentLoaded', loadCounts);
+  </script>
+</head>
+<body class="min-h-screen bg-gray-900 text-white">
+  <!-- Navigation -->
+  <nav class="bg-gray-800 border-b border-gray-700 px-4 py-2">
+    <div class="flex items-center gap-4 overflow-x-auto">
+      <a href="index.html" class="text-gray-400 hover:text-white whitespace-nowrap">Live</a>
+      <a href="history.html" class="text-gray-400 hover:text-white whitespace-nowrap">History</a>
+      <a href="day.html" class="text-gray-400 hover:text-white whitespace-nowrap">Today</a>
+      <a href="summary.html" class="text-gray-400 hover:text-white whitespace-nowrap">Summary</a>
+      <a href="review.html" class="text-blue-400 font-medium whitespace-nowrap">Review</a>
+    </div>
+  </nav>
+
+  <!-- Header -->
+  <header class="bg-gray-800 px-4 py-3">
+    <h1 class="text-xl font-bold">Review Counts</h1>
+    <p class="text-sm text-gray-400">Identify and flag false positives</p>
+  </header>
+
+  <!-- Filters -->
+  <div class="p-4 bg-gray-850 border-b border-gray-700">
+    <div class="flex gap-2 items-end">
+      <div class="flex-1">
+        <label class="text-xs text-gray-500 block mb-1">Date</label>
+        <input type="date" id="dateFilter" 
+               class="w-full bg-gray-700 rounded px-3 py-2 text-sm"
+        />
+      </div>
+      <div class="flex-1">
+        <label class="text-xs text-gray-500 block mb-1">Filter</label>
+        <select id="typeFilter" class="w-full bg-gray-700 rounded px-3 py-2 text-sm">
+          <option value="flagged">Flagged Only</option>
+          <option value="low">Low Confidence</option>
+          <option value="all">All Counts</option>
+        </select>
+      </div>
+      <button onclick="applyFilters()" class="px-4 py-2 bg-blue-600 rounded text-sm">
+        Apply
+      </button>
+    </div>
+    <div class="mt-2 text-sm text-gray-400">
+      Showing: <span id="currentFilter">Flagged</span> | <span id="stats">Loading...</span>
+    </div>
+  </div>
+
+  <!-- Counts List -->
+  <main class="p-4">
+    <div id="countsList">
+      <div class="text-gray-500 text-center py-8">Loading...</div>
+    </div>
+  </main>
+
+  <!-- Help -->
+  <div class="p-4 bg-gray-800 border-t border-gray-700">
+    <h3 class="text-sm font-medium text-gray-400 mb-2">How to Review</h3>
+    <ul class="text-xs text-gray-500 space-y-1">
+      <li>- <span class="text-yellow-500">FLAGGED</span> = Auto-flagged (confidence &lt;70%)</li>
+      <li>- Check photo: Is there a hot piece crossing the lines?</li>
+      <li>- <span class="text-red-400">False Positive</span> = No piece, adjust will be made</li>
+      <li>- <span class="text-green-400">Correct</span> = Real piece, count is valid</li>
+    </ul>
+  </div>
+</body>
+</html>

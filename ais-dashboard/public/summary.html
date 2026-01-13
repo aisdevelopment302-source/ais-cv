@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Summary - AIS Production</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+    import { getFirestore, collection, query, orderBy, limit, getDocs, where } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCBXxSsvjnFzGMMFbHCYouokIQydObeElo",
+      authDomain: "ais-production-e013c.firebaseapp.com",
+      projectId: "ais-production-e013c",
+      storageBucket: "ais-production-e013c.firebasestorage.app",
+      messagingSenderId: "565647781984",
+      appId: "1:565647781984:web:0f05c2436afdcc7a0b1305"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // Get today's date
+    const today = new Date().toISOString().split('T')[0];
+
+    // Format duration
+    function formatDuration(minutes) {
+      if (minutes === null || minutes === undefined || minutes === 0) return '0m';
+      const totalMins = Math.ceil(minutes);
+      if (totalMins < 1) return '<1m';
+      const hrs = Math.floor(totalMins / 60);
+      const mins = totalMins % 60;
+      if (hrs > 0) return `${hrs}h ${mins}m`;
+      return `${mins}m`;
+    }
+
+    // Format date short
+    function formatDateShort(dateStr) {
+      const date = new Date(dateStr + 'T00:00:00');
+      return date.toLocaleDateString('en-IN', { 
+        weekday: 'short',
+        month: 'short', 
+        day: 'numeric' 
+      });
+    }
+
+    // Calculate efficiency percentage
+    function calcEfficiency(runMins, breakMins) {
+      const total = runMins + breakMins;
+      if (total === 0) return 0;
+      return Math.round((runMins / total) * 100);
+    }
+
+    // Calculate pieces per hour
+    function calcPiecesPerHour(pieces, runMins) {
+      if (runMins === 0) return 0;
+      return Math.round((pieces / runMins) * 60);
+    }
+
+    // Calculate average cycle time
+    function calcAvgCycleTime(runMins, pieces) {
+      if (pieces === 0) return '--';
+      const seconds = (runMins * 60) / pieces;
+      if (seconds < 60) return `${Math.round(seconds)}s`;
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.round(seconds % 60);
+      return `${mins}m ${secs}s`;
+    }
+
+    // Get date N days ago
+    function getDateDaysAgo(days) {
+      const date = new Date();
+      date.setDate(date.getDate() - days);
+      return date.toISOString().split('T')[0];
+    }
+
+    // Load summary data
+    async function loadSummary() {
+      const loading = document.getElementById('loading');
+      
+      try {
+        // Load last 7 days of data
+        const dailyQuery = query(
+          collection(db, 'daily'),
+          orderBy('date', 'desc'),
+          limit(7)
+        );
+        
+        const snapshot = await getDocs(dailyQuery);
+        
+        loading.classList.add('hidden');
+        
+        if (snapshot.empty) {
+          document.getElementById('noData').classList.remove('hidden');
+          return;
+        }
+        
+        // Process data
+        const days = [];
+        let totalPieces = 0;
+        let totalRunMins = 0;
+        let totalBreakMins = 0;
+        let todayData = null;
+        
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          const dateStr = data.date || doc.id;
+          const pieces = data.count || 0;
+          const runMins = data.total_run_minutes || 0;
+          const breakMins = data.total_break_minutes || 0;
+          
+          days.push({
+            date: dateStr,
+            pieces,
+            runMins,
+            breakMins,
+            efficiency: calcEfficiency(runMins, breakMins)
+          });
+          
+          totalPieces += pieces;
+          totalRunMins += runMins;
+          totalBreakMins += breakMins;
+          
+          if (dateStr === today) {
+            todayData = { pieces, runMins, breakMins };
+          }
+        });
+        
+        // Show content
+        document.getElementById('content').classList.remove('hidden');
+        
+        // Update Today's Stats
+        if (todayData) {
+          document.getElementById('todayPieces').textContent = todayData.pieces;
+          document.getElementById('todayRun').textContent = formatDuration(todayData.runMins);
+          document.getElementById('todayBreak').textContent = formatDuration(todayData.breakMins);
+          document.getElementById('todayEfficiency').textContent = calcEfficiency(todayData.runMins, todayData.breakMins) + '%';
+          document.getElementById('todayPPH').textContent = calcPiecesPerHour(todayData.pieces, todayData.runMins);
+          document.getElementById('todayCycle').textContent = calcAvgCycleTime(todayData.runMins, todayData.pieces);
+        } else {
+          document.getElementById('todayPieces').textContent = '0';
+          document.getElementById('todayRun').textContent = '0m';
+          document.getElementById('todayBreak').textContent = '0m';
+          document.getElementById('todayEfficiency').textContent = '0%';
+          document.getElementById('todayPPH').textContent = '0';
+          document.getElementById('todayCycle').textContent = '--';
+        }
+        
+        // Update Weekly Stats
+        document.getElementById('weekPieces').textContent = totalPieces.toLocaleString();
+        document.getElementById('weekRun').textContent = formatDuration(totalRunMins);
+        document.getElementById('weekBreak').textContent = formatDuration(totalBreakMins);
+        document.getElementById('weekEfficiency').textContent = calcEfficiency(totalRunMins, totalBreakMins) + '%';
+        document.getElementById('weekAvgPieces').textContent = Math.round(totalPieces / days.length);
+        document.getElementById('weekAvgCycle').textContent = calcAvgCycleTime(totalRunMins, totalPieces);
+        
+        // Render daily breakdown chart
+        const chartContainer = document.getElementById('dailyChart');
+        chartContainer.innerHTML = '';
+        
+        // Find max pieces for scaling
+        const maxPieces = Math.max(...days.map(d => d.pieces), 1);
+        
+        // Reverse to show oldest first (left to right)
+        const reversedDays = [...days].reverse();
+        
+        reversedDays.forEach(day => {
+          const barHeight = Math.max(4, (day.pieces / maxPieces) * 100);
+          const isToday = day.date === today;
+          
+          const col = document.createElement('div');
+          col.className = 'flex flex-col items-center flex-1 min-w-0';
+          col.innerHTML = `
+            <div class="text-xs text-gray-400 mb-1">${day.pieces}</div>
+            <div class="w-full bg-gray-700 rounded-t flex-1 flex flex-col justify-end" style="height: 120px;">
+              <div class="w-full rounded-t ${isToday ? 'bg-blue-500' : 'bg-blue-600/70'}" style="height: ${barHeight}%"></div>
+            </div>
+            <div class="text-xs ${isToday ? 'text-blue-400 font-medium' : 'text-gray-500'} mt-1 truncate w-full text-center">
+              ${isToday ? 'Today' : formatDateShort(day.date).split(',')[0]}
+            </div>
+          `;
+          
+          // Make it clickable
+          col.onclick = () => window.location.href = `day.html?date=${day.date}`;
+          col.className += ' cursor-pointer hover:opacity-80 transition-opacity';
+          
+          chartContainer.appendChild(col);
+        });
+        
+        // Render efficiency trend
+        const efficiencyContainer = document.getElementById('efficiencyTrend');
+        efficiencyContainer.innerHTML = '';
+        
+        reversedDays.forEach(day => {
+          const isToday = day.date === today;
+          const effColor = day.efficiency >= 70 ? 'text-green-400' : day.efficiency >= 50 ? 'text-yellow-400' : 'text-red-400';
+          
+          const col = document.createElement('div');
+          col.className = 'flex flex-col items-center flex-1 min-w-0';
+          col.innerHTML = `
+            <div class="text-lg font-bold ${effColor}">${day.efficiency}%</div>
+            <div class="text-xs text-gray-500 truncate w-full text-center">
+              ${isToday ? 'Today' : formatDateShort(day.date).split(',')[0]}
+            </div>
+          `;
+          
+          efficiencyContainer.appendChild(col);
+        });
+        
+      } catch (error) {
+        console.error('Error loading summary:', error);
+        loading.innerHTML = `
+          <div class="text-red-400 text-center py-4">
+            <p>Error loading data</p>
+            <p class="text-xs mt-1 text-gray-500">${error.message}</p>
+          </div>
+        `;
+      }
+    }
+
+    // Load on page ready
+    loadSummary();
+  </script>
+</head>
+<body class="min-h-screen bg-gray-900 text-white pb-16">
+  <!-- Navigation -->
+  <nav class="bg-gray-800 border-b border-gray-700 px-4 py-2">
+    <div class="flex items-center gap-4 overflow-x-auto">
+      <a href="index.html" class="text-gray-400 hover:text-white whitespace-nowrap">Live</a>
+      <a href="history.html" class="text-gray-400 hover:text-white whitespace-nowrap">History</a>
+      <a href="day.html" class="text-gray-400 hover:text-white whitespace-nowrap">Today</a>
+      <a href="summary.html" class="text-blue-400 font-medium whitespace-nowrap">Summary</a>
+      <a href="review.html" class="text-gray-400 hover:text-white whitespace-nowrap">Review</a>
+    </div>
+  </nav>
+
+  <!-- Header -->
+  <header class="bg-gray-800 px-4 py-3">
+    <h1 class="text-xl font-bold">Production Summary</h1>
+    <p class="text-sm text-gray-400">Performance overview</p>
+  </header>
+
+  <!-- Main Content -->
+  <main class="p-4">
+    <!-- Loading -->
+    <div id="loading" class="text-center py-8">
+      <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+      <p class="text-gray-400 mt-2">Loading summary...</p>
+    </div>
+    
+    <!-- No Data -->
+    <div id="noData" class="hidden text-center py-8">
+      <p class="text-gray-500">No production data yet</p>
+      <p class="text-xs text-gray-600 mt-1">Data will appear once the counter starts running</p>
+    </div>
+
+    <!-- Content -->
+    <div id="content" class="hidden">
+      <!-- Today's Stats -->
+      <div class="mb-6">
+        <h2 class="text-gray-400 text-xs uppercase mb-3">Today's Stats</h2>
+        <div class="grid grid-cols-3 gap-3 mb-3">
+          <div class="bg-blue-900/30 border border-blue-700 rounded-xl p-3 text-center">
+            <p class="text-blue-400 text-xs uppercase">Pieces</p>
+            <p id="todayPieces" class="text-2xl font-bold text-blue-300">--</p>
+          </div>
+          <div class="bg-green-900/30 border border-green-700 rounded-xl p-3 text-center">
+            <p class="text-green-400 text-xs uppercase">Run</p>
+            <p id="todayRun" class="text-2xl font-bold text-green-300">--</p>
+          </div>
+          <div class="bg-yellow-900/30 border border-yellow-700 rounded-xl p-3 text-center">
+            <p class="text-yellow-400 text-xs uppercase">Break</p>
+            <p id="todayBreak" class="text-2xl font-bold text-yellow-300">--</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div class="bg-gray-800 rounded-xl p-3 text-center">
+            <p class="text-gray-400 text-xs uppercase">Efficiency</p>
+            <p id="todayEfficiency" class="text-xl font-bold text-white">--</p>
+          </div>
+          <div class="bg-gray-800 rounded-xl p-3 text-center">
+            <p class="text-gray-400 text-xs uppercase">Pcs/Hour</p>
+            <p id="todayPPH" class="text-xl font-bold text-white">--</p>
+          </div>
+          <div class="bg-gray-800 rounded-xl p-3 text-center">
+            <p class="text-gray-400 text-xs uppercase">Avg Cycle</p>
+            <p id="todayCycle" class="text-xl font-bold text-white">--</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Weekly Stats -->
+      <div class="mb-6">
+        <h2 class="text-gray-400 text-xs uppercase mb-3">Last 7 Days</h2>
+        <div class="grid grid-cols-3 gap-3 mb-3">
+          <div class="bg-gray-800 rounded-xl p-3 text-center">
+            <p class="text-gray-400 text-xs uppercase">Total Pieces</p>
+            <p id="weekPieces" class="text-xl font-bold text-white">--</p>
+          </div>
+          <div class="bg-gray-800 rounded-xl p-3 text-center">
+            <p class="text-gray-400 text-xs uppercase">Total Run</p>
+            <p id="weekRun" class="text-xl font-bold text-green-300">--</p>
+          </div>
+          <div class="bg-gray-800 rounded-xl p-3 text-center">
+            <p class="text-gray-400 text-xs uppercase">Total Break</p>
+            <p id="weekBreak" class="text-xl font-bold text-yellow-300">--</p>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div class="bg-gray-800 rounded-xl p-3 text-center">
+            <p class="text-gray-400 text-xs uppercase">Efficiency</p>
+            <p id="weekEfficiency" class="text-xl font-bold text-white">--</p>
+          </div>
+          <div class="bg-gray-800 rounded-xl p-3 text-center">
+            <p class="text-gray-400 text-xs uppercase">Avg/Day</p>
+            <p id="weekAvgPieces" class="text-xl font-bold text-white">--</p>
+          </div>
+          <div class="bg-gray-800 rounded-xl p-3 text-center">
+            <p class="text-gray-400 text-xs uppercase">Avg Cycle</p>
+            <p id="weekAvgCycle" class="text-xl font-bold text-white">--</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Daily Chart -->
+      <div class="bg-gray-800 rounded-xl p-4 mb-4">
+        <h2 class="text-gray-400 text-xs uppercase mb-3">Daily Production</h2>
+        <div id="dailyChart" class="flex gap-2 items-end">
+          <!-- Generated dynamically -->
+        </div>
+      </div>
+
+      <!-- Efficiency Trend -->
+      <div class="bg-gray-800 rounded-xl p-4">
+        <h2 class="text-gray-400 text-xs uppercase mb-3">Efficiency Trend</h2>
+        <div id="efficiencyTrend" class="flex gap-2">
+          <!-- Generated dynamically -->
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 px-4 py-2">
+    <div class="flex justify-between text-xs text-gray-500">
+      <span>CAM-1 Furnace</span>
+      <span>AIS v1.0</span>
+    </div>
+  </footer>
+</body>
+</html>

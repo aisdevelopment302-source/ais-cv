@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Debug - AIS Production</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+    import { getFirestore, doc, getDoc, collection, getDocs, query, where, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCBXxSsvjnFzGMMFbHCYouokIQydObeElo",
+      authDomain: "ais-production-e013c.firebaseapp.com",
+      projectId: "ais-production-e013c",
+      storageBucket: "ais-production-e013c.firebasestorage.app",
+      messagingSenderId: "565647781984",
+      appId: "1:565647781984:web:0f05c2436afdcc7a0b1305"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // Get date from URL params
+    const urlParams = new URLSearchParams(window.location.search);
+    let dateStr = urlParams.get('date') || new Date().toISOString().split('T')[0];
+    
+    document.getElementById('dateInput').value = dateStr;
+    document.getElementById('currentDate').textContent = dateStr;
+
+    async function loadDebugData() {
+      const output = document.getElementById('output');
+      output.innerHTML = '<p class="text-gray-400">Loading...</p>';
+      
+      let html = '';
+      
+      try {
+        // 1. Daily document
+        html += '<h2 class="text-xl font-bold text-blue-400 mt-4 mb-2">1. Daily Document (/daily/' + dateStr + ')</h2>';
+        const dailyDoc = await getDoc(doc(db, 'daily', dateStr));
+        if (dailyDoc.exists()) {
+          const data = dailyDoc.data();
+          html += '<pre class="bg-gray-800 p-3 rounded text-sm overflow-x-auto">' + JSON.stringify(data, null, 2) + '</pre>';
+        } else {
+          html += '<p class="text-yellow-400">No daily document found</p>';
+        }
+        
+        // 2. Hourly documents
+        html += '<h2 class="text-xl font-bold text-blue-400 mt-6 mb-2">2. Hourly Documents (/hourly/' + dateStr + '/hours/*)</h2>';
+        const hoursRef = collection(db, 'hourly', dateStr, 'hours');
+        const hoursSnapshot = await getDocs(hoursRef);
+        
+        if (hoursSnapshot.empty) {
+          html += '<p class="text-yellow-400">No hourly documents found</p>';
+        } else {
+          html += '<div class="space-y-2">';
+          const hourlyData = [];
+          hoursSnapshot.forEach(doc => {
+            hourlyData.push({ hour: doc.id, ...doc.data() });
+          });
+          hourlyData.sort((a, b) => a.hour.localeCompare(b.hour));
+          
+          let totalCount = 0;
+          let totalRun = 0;
+          let totalBreak = 0;
+          
+          hourlyData.forEach(h => {
+            totalCount += h.count || 0;
+            totalRun += h.run_minutes || 0;
+            totalBreak += h.break_minutes || 0;
+            html += `<div class="bg-gray-800 p-2 rounded text-sm">
+              <span class="text-green-400 font-mono">${h.hour}:00</span> - 
+              Count: <span class="text-blue-300">${h.count || 0}</span>, 
+              Run: <span class="text-green-300">${(h.run_minutes || 0).toFixed(1)}m</span>, 
+              Break: <span class="text-yellow-300">${(h.break_minutes || 0).toFixed(1)}m</span>
+            </div>`;
+          });
+          html += '</div>';
+          html += `<div class="bg-gray-700 p-3 rounded mt-2">
+            <strong>Hourly Totals:</strong> Count=${totalCount}, Run=${totalRun.toFixed(1)}m, Break=${totalBreak.toFixed(1)}m
+          </div>`;
+        }
+        
+        // 3. Sessions
+        html += '<h2 class="text-xl font-bold text-blue-400 mt-6 mb-2">3. Sessions (/sessions where date=' + dateStr + ')</h2>';
+        const sessionsQuery = query(
+          collection(db, 'sessions'),
+          where('date', '==', dateStr)
+        );
+        const sessionsSnapshot = await getDocs(sessionsQuery);
+        
+        if (sessionsSnapshot.empty) {
+          html += '<p class="text-yellow-400">No sessions found for this date</p>';
+        } else {
+          const sessions = [];
+          sessionsSnapshot.forEach(doc => {
+            sessions.push({ id: doc.id, ...doc.data() });
+          });
+          
+          // Sort by start time
+          sessions.sort((a, b) => {
+            const aTime = a.start?.toDate?.() || new Date(0);
+            const bTime = b.start?.toDate?.() || new Date(0);
+            return aTime - bTime;
+          });
+          
+          let totalRunMins = 0;
+          let totalBreakMins = 0;
+          let totalPieces = 0;
+          
+          html += `<p class="text-gray-400 mb-2">Found ${sessions.length} sessions:</p>`;
+          html += '<div class="space-y-2">';
+          
+          sessions.forEach((s, i) => {
+            const startDate = s.start?.toDate?.();
+            const endDate = s.end?.toDate?.();
+            const startTime = startDate?.toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit', hour12: true}) || '--:--';
+            const endTime = endDate?.toLocaleTimeString('en-IN', {hour: '2-digit', minute: '2-digit', hour12: true}) || 'ongoing';
+            const startISO = startDate?.toISOString() || 'N/A';
+            const duration = s.duration_minutes || 0;
+            const pieces = s.count || 0;
+            
+            if (s.type === 'RUN') {
+              totalRunMins += duration;
+              totalPieces += pieces;
+            } else {
+              totalBreakMins += duration;
+            }
+            
+            const bgColor = s.type === 'RUN' ? 'bg-green-900/30 border-green-700' : 'bg-yellow-900/30 border-yellow-700';
+            html += `<div class="p-2 rounded border ${bgColor} text-sm">
+              <div class="flex justify-between">
+                <span class="font-medium">#${i+1} ${s.type}</span>
+                <span>${duration.toFixed(1)}m</span>
+              </div>
+              <div class="text-green-400">${startTime} - ${endTime}</div>
+              <div class="text-gray-500 text-xs">Raw: ${startISO}</div>
+              ${s.type === 'RUN' ? `<div class="text-blue-300">Pieces: ${pieces}</div>` : ''}
+              <div class="text-gray-500 text-xs mt-1">ID: ${s.id}</div>
+            </div>`;
+          });
+          html += '</div>';
+          
+          html += `<div class="bg-gray-700 p-3 rounded mt-2">
+            <strong>Session Totals:</strong> 
+            Run=${totalRunMins.toFixed(1)}m, 
+            Break=${totalBreakMins.toFixed(1)}m, 
+            Pieces=${totalPieces}
+          </div>`;
+        }
+        
+        // 4. Counts (sample)
+        html += '<h2 class="text-xl font-bold text-blue-400 mt-6 mb-2">4. Counts Sample (/counts where date=' + dateStr + ', limit 20)</h2>';
+        const countsQuery = query(
+          collection(db, 'counts'),
+          where('date', '==', dateStr),
+          limit(20)
+        );
+        const countsSnapshot = await getDocs(countsQuery);
+        
+        if (countsSnapshot.empty) {
+          html += '<p class="text-yellow-400">No counts found for this date</p>';
+        } else {
+          html += `<p class="text-gray-400 mb-2">Showing first 20 of possibly more counts:</p>`;
+          html += '<div class="grid grid-cols-2 gap-2">';
+          countsSnapshot.forEach(doc => {
+            const c = doc.data();
+            const time = c.timestamp?.toDate?.()?.toLocaleTimeString() || '--:--:--';
+            html += `<div class="bg-gray-800 p-2 rounded text-xs">
+              <span class="text-gray-400">${time}</span> - 
+              Travel: ${c.travel_time?.toFixed(1) || '?'}s
+            </div>`;
+          });
+          html += '</div>';
+        }
+        
+        // 5. Get total counts
+        html += '<h2 class="text-xl font-bold text-blue-400 mt-6 mb-2">5. Total Counts Check</h2>';
+        const allCountsQuery = query(
+          collection(db, 'counts'),
+          where('date', '==', dateStr)
+        );
+        const allCountsSnapshot = await getDocs(allCountsQuery);
+        html += `<p>Total count documents for ${dateStr}: <span class="text-blue-300 font-bold">${allCountsSnapshot.size}</span></p>`;
+        
+        // 6. Live document
+        html += '<h2 class="text-xl font-bold text-blue-400 mt-6 mb-2">6. Live Document (/live/furnace)</h2>';
+        const liveDoc = await getDoc(doc(db, 'live', 'furnace'));
+        if (liveDoc.exists()) {
+          const data = liveDoc.data();
+          // Convert timestamps for display
+          const displayData = { ...data };
+          if (displayData.last_count?.toDate) {
+            displayData.last_count = displayData.last_count.toDate().toLocaleString();
+          }
+          html += '<pre class="bg-gray-800 p-3 rounded text-sm overflow-x-auto">' + JSON.stringify(displayData, null, 2) + '</pre>';
+        } else {
+          html += '<p class="text-yellow-400">No live document found</p>';
+        }
+        
+        output.innerHTML = html;
+        
+      } catch (error) {
+        output.innerHTML = `<div class="text-red-400">
+          <p class="font-bold">Error:</p>
+          <pre class="bg-gray-800 p-3 rounded mt-2">${error.message}\n\n${error.stack}</pre>
+        </div>`;
+      }
+    }
+    
+    window.changeDate = function() {
+      const newDate = document.getElementById('dateInput').value;
+      window.location.href = `debug.html?date=${newDate}`;
+    };
+    
+    window.refresh = function() {
+      loadDebugData();
+    };
+    
+    // Load on page ready
+    loadDebugData();
+  </script>
+</head>
+<body class="min-h-screen bg-gray-900 text-white p-4">
+  <div class="max-w-4xl mx-auto">
+    <h1 class="text-2xl font-bold mb-4">🔍 Firebase Debug View</h1>
+    
+    <div class="flex gap-2 mb-4 items-center">
+      <input type="date" id="dateInput" class="bg-gray-700 rounded px-3 py-2" onchange="changeDate()">
+      <button onclick="refresh()" class="px-4 py-2 bg-blue-600 rounded hover:bg-blue-500">Refresh</button>
+      <span class="text-gray-400">Viewing: <span id="currentDate" class="text-blue-400"></span></span>
+    </div>
+    
+    <div class="mb-4">
+      <a href="day.html" class="text-blue-400 hover:underline">← Back to Day View</a>
+    </div>
+    
+    <div id="output" class="space-y-4">
+      <p class="text-gray-400">Loading...</p>
+    </div>
+  </div>
+</body>
+</html>

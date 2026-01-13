@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AIS Production Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+    import { getFirestore, doc, onSnapshot, collection, query, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+    // Photo API on Raspberry Pi (local network only)
+    const PHOTO_API = 'http://192.168.1.23:5001';
+
+    // Photo functions - exposed to global scope for onclick handlers
+    window.refreshPhoto = function() {
+      const img = document.getElementById('latestPhoto');
+      const loading = document.getElementById('photoLoading');
+      const error = document.getElementById('photoError');
+      
+      loading.innerHTML = '<p class="animate-pulse">Loading...</p>';
+      loading.classList.remove('hidden');
+      error.classList.add('hidden');
+      img.classList.add('hidden');
+      
+      // Add timestamp to bypass cache
+      const timestamp = new Date().getTime();
+      img.src = `${PHOTO_API}/api/photos/latest?t=${timestamp}`;
+      
+      img.onload = function() {
+        img.classList.remove('hidden');
+        loading.classList.add('hidden');
+        error.classList.add('hidden');
+      };
+      
+      img.onerror = function() {
+        console.error('Photo fetch error');
+        loading.classList.add('hidden');
+        error.classList.remove('hidden');
+        img.classList.add('hidden');
+      };
+    };
+
+    window.togglePhotoFullscreen = function() {
+      const img = document.getElementById('latestPhoto');
+      if (!img.src) return;
+      
+      if (img.classList.contains('fixed')) {
+        // Exit fullscreen
+        img.classList.remove('fixed', 'inset-0', 'z-50', 'object-contain', 'bg-black', 'p-4');
+        img.classList.add('w-full', 'rounded-lg');
+      } else {
+        // Enter fullscreen
+        img.classList.add('fixed', 'inset-0', 'z-50', 'object-contain', 'bg-black', 'p-4');
+        img.classList.remove('w-full', 'rounded-lg');
+      }
+    };
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCBXxSsvjnFzGMMFbHCYouokIQydObeElo",
+      authDomain: "ais-production-e013c.firebaseapp.com",
+      projectId: "ais-production-e013c",
+      storageBucket: "ais-production-e013c.firebasestorage.app",
+      messagingSenderId: "565647781984",
+      appId: "1:565647781984:web:0f05c2436afdcc7a0b1305"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // DOM elements
+    const countDisplay = document.getElementById('count');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const lastUpdateDisplay = document.getElementById('lastUpdate');
+    const lastTravelDisplay = document.getElementById('lastTravel');
+    const statusDisplay = document.getElementById('statusValue');
+    const runTimeDisplay = document.getElementById('runTime');
+    const breakTimeDisplay = document.getElementById('breakTime');
+    const recentList = document.getElementById('recentList');
+    const connectionStatus = document.getElementById('connectionStatus');
+    const todayLink = document.getElementById('todayLink');
+
+    // Set today's date link
+    const today = new Date().toISOString().split('T')[0];
+    todayLink.href = `day.html?date=${today}`;
+
+    // Format duration - handles fractional minutes properly
+    function formatDuration(minutes) {
+      if (minutes === null || minutes === undefined || minutes === 0) return '0m';
+      // Round up any fractional minutes so they're visible
+      const totalMins = Math.ceil(minutes);
+      if (totalMins < 1) return '<1m';
+      const hrs = Math.floor(totalMins / 60);
+      const mins = totalMins % 60;
+      if (hrs > 0) return `${hrs}h ${mins}m`;
+      return `${mins}m`;
+    }
+
+    // Listen to live data
+    onSnapshot(doc(db, 'live', 'furnace'), (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        
+        // Update count
+        countDisplay.textContent = data.today_count || 0;
+        
+        // Update status
+        const status = data.status || 'OFFLINE';
+        statusDisplay.textContent = status;
+        
+        if (status === 'RUNNING') {
+          statusDot.className = 'w-3 h-3 rounded-full bg-green-500 animate-pulse';
+          statusText.textContent = 'Mill Running';
+        } else if (status === 'BREAK') {
+          statusDot.className = 'w-3 h-3 rounded-full bg-yellow-500';
+          statusText.textContent = 'Break';
+        } else {
+          statusDot.className = 'w-3 h-3 rounded-full bg-red-500';
+          statusText.textContent = 'Offline';
+        }
+        
+        // Update last travel time
+        lastTravelDisplay.textContent = data.last_travel_time ? 
+          data.last_travel_time.toFixed(1) + 's' : '--';
+        
+        // Update last count time
+        if (data.last_count) {
+          const time = data.last_count.toDate();
+          lastUpdateDisplay.textContent = time.toLocaleTimeString();
+        }
+        
+        connectionStatus.classList.add('hidden');
+      }
+    }, (error) => {
+      console.error('Firestore error:', error);
+      connectionStatus.classList.remove('hidden');
+    });
+
+    // Listen to today's daily stats
+    onSnapshot(doc(db, 'daily', today), (doc) => {
+      if (doc.exists()) {
+        const data = doc.data();
+        runTimeDisplay.textContent = formatDuration(data.total_run_minutes || 0);
+        breakTimeDisplay.textContent = formatDuration(data.total_break_minutes || 0);
+      }
+    });
+
+    // Listen to recent counts
+    const countsQuery = query(
+      collection(db, 'counts'),
+      orderBy('timestamp', 'desc'),
+      limit(5)
+    );
+
+    onSnapshot(countsQuery, (snapshot) => {
+      recentList.innerHTML = '';
+      
+      if (snapshot.empty) {
+        recentList.innerHTML = '<div class="text-gray-500 text-center py-4">No counts yet today</div>';
+        return;
+      }
+      
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        const time = data.timestamp?.toDate()?.toLocaleTimeString() || '--:--:--';
+        const travel = data.travel_time ? data.travel_time.toFixed(1) + 's' : '--';
+        
+        const div = document.createElement('div');
+        div.className = 'flex justify-between items-center py-2 border-b border-gray-700 last:border-0';
+        div.innerHTML = `
+          <span class="text-gray-300">${time}</span>
+          <span class="text-gray-500 text-sm">Travel: ${travel}</span>
+        `;
+        recentList.appendChild(div);
+      });
+    });
+  </script>
+</head>
+<body class="min-h-screen bg-gray-900 text-white pb-16">
+  <!-- Navigation -->
+  <nav class="bg-gray-800 border-b border-gray-700 px-4 py-2">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-4 overflow-x-auto">
+        <a href="index.html" class="text-blue-400 font-medium whitespace-nowrap">Live</a>
+        <a href="history.html" class="text-gray-400 hover:text-white whitespace-nowrap">History</a>
+        <a id="todayLink" href="day.html" class="text-gray-400 hover:text-white whitespace-nowrap">Today</a>
+        <a href="summary.html" class="text-gray-400 hover:text-white whitespace-nowrap">Summary</a>
+        <a href="review.html" class="text-gray-400 hover:text-white whitespace-nowrap">Review</a>
+      </div>
+      <div class="flex items-center gap-2">
+        <div id="statusDot" class="w-3 h-3 rounded-full bg-red-500"></div>
+        <span id="statusText" class="text-sm text-gray-300">Connecting...</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Header -->
+  <header class="bg-gray-800 px-4 py-3">
+    <h1 class="text-xl font-bold">AIS Production</h1>
+    <p class="text-sm text-gray-400">Furnace Camera - Plate Scrap Counter</p>
+  </header>
+
+  <!-- Main Content -->
+  <main class="p-4">
+    <!-- Big Count Card -->
+    <div class="bg-gradient-to-br from-blue-600 to-blue-800 rounded-2xl p-6 mb-4 shadow-lg">
+      <div class="text-center">
+        <p class="text-blue-200 text-sm uppercase tracking-wider mb-2">Pieces Today</p>
+        <p id="count" class="text-7xl font-bold tabular-nums">--</p>
+        <p class="text-blue-200 text-sm mt-2">
+          Last count: <span id="lastUpdate">--:--:--</span>
+        </p>
+      </div>
+    </div>
+
+    <!-- Stats Grid -->
+    <div class="grid grid-cols-2 gap-4 mb-4">
+      <div class="bg-gray-800 rounded-xl p-4">
+        <p class="text-gray-400 text-xs uppercase">Last Travel</p>
+        <p id="lastTravel" class="text-2xl font-bold">--</p>
+      </div>
+      <div class="bg-gray-800 rounded-xl p-4">
+        <p class="text-gray-400 text-xs uppercase">Status</p>
+        <p id="statusValue" class="text-2xl font-bold">--</p>
+      </div>
+    </div>
+
+    <!-- Run/Break Time -->
+    <div class="grid grid-cols-2 gap-4 mb-4">
+      <div class="bg-green-900/30 border border-green-700 rounded-xl p-4">
+        <p class="text-green-400 text-xs uppercase">Run Time</p>
+        <p id="runTime" class="text-2xl font-bold text-green-300">--</p>
+      </div>
+      <div class="bg-yellow-900/30 border border-yellow-700 rounded-xl p-4">
+        <p class="text-yellow-400 text-xs uppercase">Break Time</p>
+        <p id="breakTime" class="text-2xl font-bold text-yellow-300">--</p>
+      </div>
+    </div>
+
+    <!-- Latest Photo -->
+    <div class="bg-gray-800 rounded-xl p-4 mb-4">
+      <div class="flex justify-between items-center mb-3">
+        <h2 class="text-gray-400 text-xs uppercase">Last Count Photo</h2>
+        <button onclick="refreshPhoto()" class="text-blue-400 text-xs hover:text-blue-300">Refresh</button>
+      </div>
+      <div id="photoContainer" class="relative">
+        <img id="latestPhoto" 
+             src="" 
+             alt="Latest count" 
+             class="w-full rounded-lg hidden cursor-pointer"
+             onclick="togglePhotoFullscreen()"
+        />
+        <div id="photoLoading" class="text-gray-500 text-center py-8">
+          <p>📷 Tap to load photo</p>
+          <button onclick="refreshPhoto()" class="mt-2 px-4 py-2 bg-blue-600 rounded-lg text-sm">Load Photo</button>
+        </div>
+        <div id="photoError" class="text-gray-500 text-center py-4 hidden">
+          <p>Photo unavailable</p>
+          <p class="text-xs mt-1">Connect to local network to view</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent Counts -->
+    <div class="bg-gray-800 rounded-xl p-4">
+      <h2 class="text-gray-400 text-xs uppercase mb-3">Recent Counts</h2>
+      <div id="recentList">
+        <div class="text-gray-500 text-center py-4">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Connection Error -->
+    <div id="connectionStatus" class="mt-4 bg-red-900/50 border border-red-600 rounded-lg p-3 text-center hidden">
+      <p class="text-red-200 text-sm">Connection error - retrying...</p>
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 px-4 py-2">
+    <div class="flex justify-between text-xs text-gray-500">
+      <span>CAM-1 Furnace</span>
+      <span>AIS v1.0</span>
+    </div>
+  </footer>
+</body>
+</html>

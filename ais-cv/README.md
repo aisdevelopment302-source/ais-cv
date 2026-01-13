@@ -1,16 +1,18 @@
-# AIS CV - Production Detection Module
+# AIS-CV - Rolling Mill Production Monitoring
 
-Computer vision module for detecting production state (RUNNING vs BREAK) in the rolling mill.
+Computer vision module for monitoring production state and counting plate pieces in a rolling mill.
 
-## Overview
+## Features
 
-This module monitors the Furnace Opening camera to detect:
-- **RUNNING**: Hot stock being pulled from furnace
-- **BREAK**: No stock activity for 2+ minutes
+- **Piece Counting**: Counts hot plate pieces crossing the conveyor using 3-line detection
+- **Session Tracking**: Tracks RUN/BREAK production sessions with duration metrics
+- **Firebase Sync**: Real-time sync to Firestore for dashboards and analytics
+- **Photo Capture**: Saves validation photos for each counted piece
+- **Auto-Recovery**: Handles camera disconnects and system restarts gracefully
 
 ## Quick Start
 
-### 1. Setup (Raspberry Pi)
+### 1. Setup Environment
 
 ```bash
 cd ais-cv
@@ -29,24 +31,44 @@ nano config/settings.yaml
 
 Update these values:
 - `camera.rtsp_url`: Your NVR credentials and IP
-- `roi.furnace_door`: Calibrate based on your camera view
+- `counting_lines`: Calibrate based on your camera view (see [Calibration Guide](docs/CALIBRATION.md))
 
-### 3. Run
-
-```bash
-source venv/bin/activate
-python src/main.py
-```
-
-### 4. Run as Service (Optional)
+### 3. Calibrate Detection Lines
 
 ```bash
-# Create systemd service
-sudo cp ais-cv.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable ais-cv
-sudo systemctl start ais-cv
+python scripts/calibrate_lines.py
 ```
+
+### 4. Run Counter
+
+```bash
+# Run continuously
+python scripts/run_counter.py
+
+# Run for testing (60 seconds)
+python scripts/run_counter.py --duration 60 --test
+
+# Run without Firebase
+python scripts/run_counter.py --no-firebase
+```
+
+### 5. Install as Service (Production)
+
+```bash
+cd deploy
+sudo bash install-service.sh
+```
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/ARCHITECTURE.md) | System design, components, and data flow |
+| [Configuration](docs/CONFIGURATION.md) | Complete configuration reference |
+| [Calibration](docs/CALIBRATION.md) | Detection line positioning and threshold tuning |
+| [Deployment](docs/DEPLOYMENT.md) | Systemd service setup and monitoring |
+| [Firebase](docs/FIREBASE.md) | Firestore schema and integration |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
 
 ## Project Structure
 
@@ -54,36 +76,86 @@ sudo systemctl start ais-cv
 ais-cv/
 ├── config/
 │   ├── settings.template.yaml  # Template (safe to commit)
-│   └── settings.yaml           # Your config (DO NOT COMMIT)
+│   ├── settings.yaml           # Your config (DO NOT COMMIT)
+│   └── firebase-service-account.json  # Firebase credentials
 ├── src/
-│   ├── main.py                 # Entry point
+│   ├── main.py                 # Production state detection
 │   ├── stream.py               # RTSP stream handler
 │   ├── detector.py             # Hot stock detection
-│   └── state_machine.py        # RUNNING/BREAK state logic
+│   ├── state_machine.py        # RUN/BREAK state logic
+│   ├── counter.py              # Plate counting (3-line detection)
+│   ├── session_manager.py      # Session tracking
+│   └── firebase_client.py      # Firestore integration
+├── scripts/
+│   ├── run_counter.py          # Main entry point
+│   ├── calibrate_lines.py      # Line calibration tool
+│   ├── test_counter.py         # Testing utility
+│   └── test_firebase.py        # Firebase connection test
+├── deploy/
+│   ├── ais-counter.service     # Systemd service file
+│   └── install-service.sh      # Service installation
 ├── data/
-│   ├── logs/                   # State change logs
-│   └── photos/                 # Validation photos
-├── tests/
+│   ├── logs/                   # Application logs
+│   └── photos/                 # Captured count photos
+├── docs/                       # Documentation
 └── requirements.txt
 ```
 
-## Configuration
+## Key Configuration
 
-See `config/settings.template.yaml` for all options.
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `luminosity_threshold` | 150 | Brightness threshold for hot steel (0-255) |
+| `min_bright_pixels` | 80 | Minimum pixels on line to trigger |
+| `sequence_timeout` | 4.0s | Max time for piece to travel L1→L3 |
+| `break_threshold_seconds` | 120 | Idle time before BREAK state |
 
-Key settings:
-- `detection.break_threshold_seconds`: Time without stock to trigger BREAK (default: 120)
-- `detection.luminosity_threshold`: Brightness threshold for hot stock (default: 180)
-- `photos.periodic_interval_seconds`: Photo capture interval (default: 300)
+See [Configuration Guide](docs/CONFIGURATION.md) for complete reference.
 
-## Logs
+## Output
 
-- State changes: `data/logs/state_changes_YYYY-MM-DD.csv`
-- Application log: `data/logs/cv.log`
-- Photos: `data/photos/`
+### Logs
+- `data/logs/counter.log` - Application log
+- `data/logs/state_changes_YYYY-MM-DD.csv` - State transitions
+
+### Photos
+Each counted piece saves a photo:
+```
+data/photos/count_1_20260112_143215.jpg
+data/photos/count_2_20260112_143218.jpg
+...
+```
+
+### Firebase (Optional)
+- Real-time status at `live/furnace`
+- Individual counts in `counts/` collection
+- Daily/hourly aggregates
+
+## Service Management
+
+```bash
+# Check status
+sudo systemctl status ais-counter
+
+# View logs
+sudo journalctl -u ais-counter -f
+
+# Restart
+sudo systemctl restart ais-counter
+
+# Stop
+sudo systemctl stop ais-counter
+```
 
 ## Hardware
 
-- Raspberry Pi 5
-- Dahua NVR (RTSP)
-- Camera: Furnace Opening (Channel 1)
+- **Compute**: Raspberry Pi 5 (or Linux server)
+- **Camera**: Dahua NVR with RTSP (Sub Stream: 704×576, H.265)
+- **Network**: Same LAN as NVR
+
+## Support
+
+For issues:
+1. Check [Troubleshooting Guide](docs/TROUBLESHOOTING.md)
+2. Review logs in `data/logs/`
+3. Verify configuration in `settings.yaml`

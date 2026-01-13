@@ -6,8 +6,10 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Optional, Callable
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
+IST = ZoneInfo("Asia/Kolkata")
 
 
 class ProductionState(Enum):
@@ -115,7 +117,7 @@ class ProductionStateMachine:
         self.state_start_time = current_time
 
         state_change = StateChange(
-            timestamp=datetime.now(),
+            timestamp=datetime.now(IST),
             previous_state=previous_state,
             new_state=new_state,
             confidence=confidence,
