@@ -6,8 +6,9 @@ Counts hot plate pieces on the furnace conveyor.
 
 Features:
 - Counts pieces using 3-line detection
-- Tracks RUN/BREAK sessions
+- Tracks RUN/BREAK sessions (5 min threshold)
 - Pushes counts and sessions to Firebase
+- Sessions pushed when they START, updated as they progress
 - Auto-resets at midnight
 
 Usage:
@@ -63,8 +64,8 @@ def run_counter(duration=None, test_mode=False, save_photos=True, use_firebase=T
         counting_config=config.get('counting', {})
     )
     
-    # Initialize session manager
-    break_threshold = config.get('detection', {}).get('break_threshold_seconds', 120)
+    # Initialize session manager (5 min = 300s break threshold)
+    break_threshold = config.get('detection', {}).get('break_threshold_seconds', 300)
     session_manager = SessionManager(break_threshold_seconds=break_threshold)
     
     # Initialize Firebase client (optional)
@@ -75,6 +76,19 @@ def run_counter(duration=None, test_mode=False, save_photos=True, use_firebase=T
             firebase = get_firebase_client()
             if firebase.initialize():
                 logger.info("Firebase connected - counts will sync to cloud")
+                
+                # Try to restore last session (crash recovery)
+                last_session = firebase.get_last_session()
+                if session_manager.restore_session(last_session):
+                    logger.info(f"Continuing existing {session_manager.status} session")
+                else:
+                    logger.info("Starting fresh (no active session to continue)")
+                
+                # Sync today's count from Firebase (for photo filenames)
+                today_count = firebase.get_today_count()
+                if today_count > 0:
+                    counter.total_count = today_count
+                    logger.info(f"Restored today's count: {today_count}")
             else:
                 logger.warning("Firebase init failed - running in offline mode")
                 firebase = None
@@ -107,9 +121,6 @@ def run_counter(duration=None, test_mode=False, save_photos=True, use_firebase=T
     frame_count = 0
     last_status_time = 0
     last_session_update = 0
-    
-    # Start initial session (will be RUN when first piece is counted)
-    # Don't push status yet - wait for first piece
     
     try:
         while True:
@@ -146,13 +157,22 @@ def run_counter(duration=None, test_mode=False, save_photos=True, use_firebase=T
                            f"Conf: {counted_piece.confidence:.0f}% ({conf_str}) | "
                            f"Total: {counter.total_count} ***")
                 
-                # Notify session manager (may trigger RUN session start)
-                # Returns tuple: (ended_session, session_info with run_minutes_since_last)
-                ended_session, session_info = session_manager.on_piece_counted(counter.total_count)
+                # Notify session manager with travel time for speed tracking
+                result = session_manager.on_piece_counted(travel_time=counted_piece.travel_time)
                 
-                # Push ended BREAK session to Firebase
-                if ended_session and firebase:
-                    firebase.push_session(ended_session.to_dict())
+                # Handle session transitions and updates
+                if firebase:
+                    # End previous BREAK session if transitioning
+                    if result['session_to_end']:
+                        firebase.end_session(result['session_to_end'])
+                    
+                    # Create new RUN session if starting
+                    if result['session_to_create']:
+                        firebase.create_session(result['session_to_create'])
+                    
+                    # Update existing RUN session with new count
+                    if result['session_to_update']:
+                        firebase.update_session(result['session_to_update'])
                 
                 # Save photo first (so we have filename)
                 photo_filename = ""
@@ -164,7 +184,7 @@ def run_counter(duration=None, test_mode=False, save_photos=True, use_firebase=T
                     photo_filename = f"count_{counted_piece.count_id}_{datetime.now(IST).strftime('%Y%m%d_%H%M%S')}.jpg"
                     cv2.imwrite(str(photo_dir / photo_filename), overlay_frame)
                 
-                # Push count to Firebase with full metadata and session info
+                # Push count to Firebase with full metadata
                 if firebase:
                     firebase.push_count({
                         'timestamp': datetime.now(IST),
@@ -186,18 +206,27 @@ def run_counter(duration=None, test_mode=False, save_photos=True, use_firebase=T
                             'L3': counted_piece.l3_avg_brightness,
                         },
                         'photo_filename': photo_filename,
-                    }, session_info)  # Pass session_info for incremental run time update
-                    # Update status to RUNNING with session info
-                    firebase.update_status('RUNNING', session_manager.get_pending_session())
+                    }, {'run_minutes_since_last': result['run_minutes_since_last']})
+                    
+                    # Update live status with current session info
+                    firebase.update_status('RUNNING', session_manager.get_current_session_dict())
             
-            # Check for break (idle detection)
-            ended_session = session_manager.check_for_break(counter.total_count)
-            if ended_session:
+            # Check for break (idle detection - 5 min threshold)
+            break_result = session_manager.check_for_break()
+            if break_result:
                 logger.info(f"Break detected - no counts for {break_threshold}s")
-                # Push ended RUN session to Firebase
+                
                 if firebase:
-                    firebase.push_session(ended_session.to_dict())
-                    firebase.update_status('BREAK', session_manager.get_pending_session())
+                    # End the RUN session
+                    if break_result['session_to_end']:
+                        firebase.end_session(break_result['session_to_end'])
+                    
+                    # Create new BREAK session
+                    if break_result['session_to_create']:
+                        firebase.create_session(break_result['session_to_create'])
+                    
+                    # Update live status
+                    firebase.update_status('BREAK', session_manager.get_current_session_dict())
             
             # Periodic status update (every 30 seconds)
             current_time = time.time()
@@ -209,10 +238,11 @@ def run_counter(duration=None, test_mode=False, save_photos=True, use_firebase=T
                            f"Break: {daily_totals['total_break_minutes']:.1f}min | "
                            f"State: {session_manager.status}")
             
-            # Update Firebase with current session info (every 60 seconds)
+            # Update Firebase status periodically (every 60 seconds)
             if firebase and current_time - last_session_update >= 60:
                 last_session_update = current_time
-                firebase.update_status(session_manager.status, session_manager.get_pending_session())
+                # Only update status, not session (duration updates at end only)
+                firebase.update_status(session_manager.status, session_manager.get_current_session_dict())
             
             # Test mode: print every detection
             if test_mode:
@@ -232,9 +262,9 @@ def run_counter(duration=None, test_mode=False, save_photos=True, use_firebase=T
         cap.release()
         
         # End current session gracefully
-        ended_session = session_manager.shutdown(counter.total_count)
+        ended_session = session_manager.shutdown()
         if ended_session and firebase:
-            firebase.push_session(ended_session.to_dict())
+            firebase.end_session(ended_session)
         
         if firebase:
             firebase.update_status('OFFLINE')

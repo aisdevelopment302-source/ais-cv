@@ -10,7 +10,7 @@ live/furnace
   - last_count: timestamp
   - last_travel_time: float
   - date: 'YYYY-MM-DD'
-  - current_session: {type, start, duration_minutes}
+  - current_session: {type, start, duration_minutes, count}
 
 counts/{auto-id}
   - timestamp: datetime
@@ -39,14 +39,14 @@ hourly/{YYYY-MM-DD}/hours/{HH}
   - run_minutes: float
   - break_minutes: float
 
-sessions/{auto-id}
+sessions/{session_id}
   - type: 'RUN' | 'BREAK'
   - start: timestamp
-  - end: timestamp
+  - end: timestamp (null while active)
   - date: 'YYYY-MM-DD'
   - hour: 'HH'
   - duration_minutes: float
-  - count: int (for RUN sessions)
+  - count: int (for RUN sessions, increments live)
 """
 
 import firebase_admin
@@ -74,7 +74,7 @@ class FirebaseClient:
         if service_account_path is None:
             # Default path relative to project root
             project_root = Path(__file__).parent.parent
-            service_account_path = project_root / "config" / "firebase-service-account.json"
+            service_account_path = str(project_root / "config" / "firebase-service-account.json")
         
         self.service_account_path = Path(service_account_path)
         self._initialized = False
@@ -116,8 +116,6 @@ class FirebaseClient:
                 - photo_filename: optional filename of count photo
             session_info: Optional dict with current session state:
                 - run_minutes_since_last: minutes of run time to add
-                - session_start: datetime when current session started
-                - session_type: 'RUN' or 'BREAK'
                 
         Returns:
             True if successful, False otherwise
@@ -219,19 +217,17 @@ class FirebaseClient:
             logger.error(f"Failed to push count: {e}")
             return False
     
-    def push_session(self, session_data: dict) -> bool:
+    def create_session(self, session) -> bool:
         """
-        Push a completed session to Firestore.
+        Create a new session in Firestore (called when session STARTS).
+        Uses session.session_id as document ID for later updates.
         
         Args:
-            session_data: Dict from Session.to_dict():
-                - type: 'RUN' | 'BREAK'
-                - start: datetime
-                - end: datetime
-                - date: 'YYYY-MM-DD'
-                - hour: 'HH'
-                - duration_minutes: float
-                - count: int
+            session: Session object with:
+                - session_id: unique ID for this session
+                - session_type: RUN or BREAK
+                - start_time: when session started
+                - count: initial count (1 for RUN, 0 for BREAK)
                 
         Returns:
             True if successful
@@ -241,15 +237,89 @@ class FirebaseClient:
                 return False
         
         try:
-            # Add to sessions collection
-            self.db.collection('sessions').add(session_data)
+            session_data = session.to_dict()
+            session_id = session.session_id
             
-            session_type = session_data.get('type', 'UNKNOWN')
-            duration = session_data.get('duration_minutes', 0)
-            date_str = session_data.get('date', datetime.now(IST).date().isoformat())
-            hour = session_data.get('hour', datetime.now(IST).strftime("%H"))
+            # Create session document with specific ID (for later updates)
+            self.db.collection('sessions').document(session_id).set(session_data)
+            
+            logger.info(f"Created {session.session_type.value} session: {session_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to create session: {e}")
+            return False
+    
+    def update_session(self, session) -> bool:
+        """
+        Update an existing session in Firestore (called as session progresses).
+        Only updates count (not duration - that's calculated at end).
+        
+        Args:
+            session: Session object with updated count
+                
+        Returns:
+            True if successful
+        """
+        if not self._initialized:
+            if not self.initialize():
+                return False
+        
+        try:
+            session_id = session.session_id
+            
+            # Update session document - only count, not duration
+            self.db.collection('sessions').document(session_id).update({
+                'count': session.count
+            })
+            
+            logger.debug(f"Updated session {session_id}: count={session.count}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to update session: {e}")
+            return False
+    
+    def end_session(self, session) -> bool:
+        """
+        Mark a session as ended in Firestore.
+        Sets end_time, final duration_minutes, and average_speed (for RUN sessions).
+        Also updates hourly/daily aggregates.
+        
+        Args:
+            session: Session object with end_time set
+                
+        Returns:
+            True if successful
+        """
+        if not self._initialized:
+            if not self.initialize():
+                return False
+        
+        try:
+            session_id = session.session_id
+            session_data = session.to_dict()
+            
+            # Build update data
+            update_data = {
+                'end': session.end_time,
+                'duration_minutes': round(session.duration_minutes, 2),
+                'count': session.count
+            }
+            
+            # Add average_speed for RUN sessions
+            if session.session_type.value == 'RUN' and session.average_speed is not None:
+                update_data['average_speed'] = round(session.average_speed, 3)
+            
+            # Update session document with end time
+            self.db.collection('sessions').document(session_id).update(update_data)
             
             # Update hourly aggregates
+            session_type = session.session_type.value
+            duration = session.duration_minutes
+            date_str = session.date_str
+            hour = session.hour
+            
             hourly_ref = self.db.collection('hourly').document(date_str).collection('hours').document(hour)
             hourly_doc = hourly_ref.get()
             
@@ -285,11 +355,11 @@ class FirebaseClient:
                     'camera': 'CAM-1'
                 })
             
-            logger.info(f"Pushed {session_type} session: {duration:.1f} min")
+            logger.info(f"Ended {session_type} session {session_id}: {duration:.1f} min")
             return True
             
         except Exception as e:
-            logger.error(f"Failed to push session: {e}")
+            logger.error(f"Failed to end session: {e}")
             return False
     
     def update_status(self, status: str, session_info: dict = None) -> bool:
@@ -319,7 +389,7 @@ class FirebaseClient:
             
             live_ref.set(update_data, merge=True)
             
-            logger.info(f"Updated status to: {status}")
+            logger.debug(f"Updated status to: {status}")
             return True
             
         except Exception as e:
@@ -371,6 +441,44 @@ class FirebaseClient:
         except Exception as e:
             logger.error(f"Failed to get today count: {e}")
             return 0
+    
+    def get_last_session(self) -> dict:
+        """
+        Get the most recent session from Firestore.
+        Used for session recovery on startup.
+        
+        Returns:
+            Dict with session data or None if no sessions found:
+                - session_id: document ID
+                - type: 'RUN' | 'BREAK'
+                - start: datetime
+                - end: datetime or None (if still active)
+                - count: int
+                - date: 'YYYY-MM-DD'
+        """
+        if not self._initialized:
+            if not self.initialize():
+                return None
+        
+        try:
+            # Get most recent session by start time
+            sessions = (self.db.collection('sessions')
+                       .order_by('start', direction=firestore.Query.DESCENDING)
+                       .limit(1)
+                       .get())
+            
+            for doc in sessions:
+                data = doc.to_dict()
+                data['session_id'] = doc.id
+                logger.info(f"Found last session: {data.get('type')} from {data.get('start')}, end={data.get('end')}")
+                return data
+            
+            logger.info("No sessions found in Firestore")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get last session: {e}")
+            return None
 
 
 # Singleton instance for easy import
