@@ -20,7 +20,7 @@
   </style>
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-    import { getFirestore, doc, getDoc, collection, getDocs, query, where } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+    import { getFirestore, doc, collection, query, where, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
     const firebaseConfig = {
       apiKey: "AIzaSyCBXxSsvjnFzGMMFbHCYouokIQydObeElo",
@@ -36,11 +36,25 @@
 
     // Get date from URL params
     const urlParams = new URLSearchParams(window.location.search);
-    let dateStr = urlParams.get('date') || new Date().toISOString().split('T')[0];
+    const dateStr = urlParams.get('date') || new Date().toISOString().split('T')[0];
+    const isToday = dateStr === new Date().toISOString().split('T')[0];
+
+    // DOM elements
+    const dateDisplay = document.getElementById('dateDisplay');
+    const totalCount = document.getElementById('totalCount');
+    const totalRun = document.getElementById('totalRun');
+    const totalBreak = document.getElementById('totalBreak');
+    const timeline = document.getElementById('timeline');
+    const loading = document.getElementById('loading');
+
+    // Stopwatch state
+    let currentSessionStart = null;
+    let currentSessionType = null;
+    let timerInterval = null;
 
     // Scale: 1 hour = 100px, so 1 minute = 100/60 px
     const PX_PER_MINUTE = 100 / 60;
-    const MIN_HEIGHT = 40; // Minimum height for very short sessions
+    const MIN_HEIGHT = 60; // Minimum height for sessions
 
     // Format date for display
     function formatDateLong(dateStr) {
@@ -53,7 +67,7 @@
       });
     }
 
-    // Format duration - handles fractional minutes properly
+    // Format duration in minutes to display string
     function formatDuration(minutes) {
       if (minutes === null || minutes === undefined || minutes === 0) return '0m';
       const totalMins = Math.ceil(minutes);
@@ -62,6 +76,18 @@
       const mins = totalMins % 60;
       if (hrs > 0) return `${hrs}h ${mins}m`;
       return `${mins}m`;
+    }
+
+    // Format elapsed time as MM:SS or H:MM:SS for stopwatch
+    function formatElapsedTime(seconds) {
+      const hrs = Math.floor(seconds / 3600);
+      const mins = Math.floor((seconds % 3600) / 60);
+      const secs = Math.floor(seconds % 60);
+      
+      if (hrs > 0) {
+        return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+      }
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
     }
 
     // Format time from Firestore timestamp
@@ -76,7 +102,16 @@
       });
     }
 
-    // Calculate average time per piece
+    // Format average speed (seconds per piece) for display
+    function formatAvgSpeed(avgSpeedSeconds) {
+      if (!avgSpeedSeconds || avgSpeedSeconds === 0) return '--';
+      if (avgSpeedSeconds < 60) return `${Math.round(avgSpeedSeconds)}s/pc`;
+      const mins = Math.floor(avgSpeedSeconds / 60);
+      const secs = Math.round(avgSpeedSeconds % 60);
+      return `${mins}m ${secs}s/pc`;
+    }
+
+    // Calculate average time per piece (fallback for active sessions)
     function calcAvgTime(durationMinutes, pieceCount) {
       if (!pieceCount || pieceCount === 0) return '--';
       const seconds = (durationMinutes * 60) / pieceCount;
@@ -86,246 +121,270 @@
       return `${mins}m ${secs}s/pc`;
     }
 
-    // Calculate bar height based on duration (1hr = 100px, min 40px)
+    // Calculate bar height based on duration
     function calcBarHeight(durationMinutes) {
       const height = durationMinutes * PX_PER_MINUTE;
       return Math.max(MIN_HEIGHT, height);
     }
 
-    // Load day data
-    async function loadDayData() {
-      const dateDisplay = document.getElementById('dateDisplay');
-      const totalCount = document.getElementById('totalCount');
-      const totalRun = document.getElementById('totalRun');
-      const totalBreak = document.getElementById('totalBreak');
-      const timeline = document.getElementById('timeline');
-      const loading = document.getElementById('loading');
+    // Update the stopwatch display
+    function updateStopwatch() {
+      const timerElement = document.getElementById('activeTimer');
+      if (!timerElement || !currentSessionStart) return;
+      
+      const now = Date.now() / 1000;
+      const elapsed = Math.max(0, now - currentSessionStart);
+      timerElement.textContent = formatElapsedTime(elapsed);
+    }
 
-      dateDisplay.textContent = formatDateLong(dateStr);
-      document.getElementById('dateNav').textContent = dateStr;
+    // Start the stopwatch
+    function startStopwatch(startSeconds, type) {
+      if (timerInterval) clearInterval(timerInterval);
+      currentSessionStart = startSeconds;
+      currentSessionType = type;
+      updateStopwatch();
+      timerInterval = setInterval(updateStopwatch, 1000);
+    }
 
-      let hasError = false;
-
-      // Load daily summary + current session info
-      try {
-        const dailyDoc = await getDoc(doc(db, 'daily', dateStr));
-        const liveDoc = await getDoc(doc(db, 'live', 'furnace'));
-        
-        let runMinutes = 0;
-        let breakMinutes = 0;
-        let pieceCount = 0;
-        
-        if (dailyDoc.exists()) {
-          const data = dailyDoc.data();
-          pieceCount = data.count || 0;
-          runMinutes = data.total_run_minutes || 0;
-          breakMinutes = data.total_break_minutes || 0;
-        }
-        
-        // Add current session duration if viewing today and session is active
-        const today = new Date().toISOString().split('T')[0];
-        if (dateStr === today && liveDoc.exists()) {
-          const liveData = liveDoc.data();
-          const currentSession = liveData.current_session;
-          
-          if (currentSession && currentSession.date === dateStr) {
-            // Calculate current session duration from start time
-            const startSeconds = currentSession.start?.seconds || 0;
-            const now = Date.now() / 1000;
-            const currentDuration = (now - startSeconds) / 60; // minutes
-            
-            if (currentSession.type === 'RUN') {
-              runMinutes += currentDuration;
-            } else if (currentSession.type === 'BREAK') {
-              breakMinutes += currentDuration;
-            }
-          }
-        }
-        
-        totalCount.textContent = pieceCount;
-        totalRun.textContent = formatDuration(runMinutes);
-        totalBreak.textContent = formatDuration(breakMinutes);
-        
-      } catch (error) {
-        console.error('Error loading daily summary:', error);
-        totalCount.textContent = '0';
-        totalRun.textContent = '0m';
-        totalBreak.textContent = '0m';
-        hasError = true;
+    // Stop the stopwatch
+    function stopStopwatch() {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
       }
+      currentSessionStart = null;
+      currentSessionType = null;
+    }
 
-      // Hide the main loading indicator
-      loading.classList.add('hidden');
-
-      // Load sessions for timeline
-      try {
-        // First, check for current active session (for today only)
-        const today = new Date().toISOString().split('T')[0];
-        let currentSession = null;
-        
-        if (dateStr === today) {
-          const liveDoc = await getDoc(doc(db, 'live', 'furnace'));
-          if (liveDoc.exists()) {
-            const liveData = liveDoc.data();
-            if (liveData.current_session && liveData.current_session.date === dateStr) {
-              currentSession = liveData.current_session;
-              // Calculate current duration
-              const startSeconds = currentSession.start?.seconds || 0;
-              const now = Date.now() / 1000;
-              currentSession.calculated_duration = (now - startSeconds) / 60;
-              // Get piece count from daily total minus completed sessions
-              currentSession.status = liveData.status;
-            }
-          }
-        }
-        
-        // Query completed sessions
-        const sessionsQuery = query(
-          collection(db, 'sessions'),
-          where('date', '==', dateStr)
-        );
-        
-        const sessionsSnapshot = await getDocs(sessionsQuery);
-        
-        timeline.innerHTML = '';
-        
-        // Show current active session at the top (if today)
-        if (currentSession) {
-          const isRun = currentSession.type === 'RUN';
-          const duration = currentSession.calculated_duration || 0;
-          const barHeight = calcBarHeight(duration);
-          const startTime = new Date(currentSession.start.seconds * 1000).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' });
-          
-          const div = document.createElement('div');
-          div.className = `relative flex rounded-lg mb-2 overflow-hidden ${isRun ? 'bg-green-900/60 border-l-4 border-green-400' : 'bg-yellow-900/60 border-l-4 border-yellow-400'} animate-pulse`;
-          div.style.minHeight = `${barHeight}px`;
-          
-          if (isRun) {
-            div.innerHTML = `
-              <div class="flex-1 p-3 flex flex-col justify-between">
-                <div>
-                  <div class="flex items-center justify-between mb-1">
-                    <span class="text-green-400 font-semibold text-sm">🟢 RUNNING NOW</span>
-                    <span class="text-white font-bold">${formatDuration(duration)}</span>
-                  </div>
-                  <p class="text-gray-400 text-xs">${startTime} - now</p>
-                </div>
-                <div class="flex items-center justify-between mt-2 pt-2 border-t border-green-800/50">
-                  <div class="text-center">
-                    <p class="text-green-300 font-bold text-lg">--</p>
-                    <p class="text-gray-500 text-xs">pieces (active)</p>
-                  </div>
-                  <div class="text-center">
-                    <p class="text-green-300 font-medium">--</p>
-                    <p class="text-gray-500 text-xs">avg cycle</p>
-                  </div>
-                </div>
-              </div>
-            `;
-          } else {
-            div.innerHTML = `
-              <div class="flex-1 p-3 flex flex-col justify-center">
-                <div class="flex items-center justify-between">
-                  <span class="text-yellow-400 font-semibold text-sm">🟡 BREAK NOW</span>
-                  <span class="text-white font-bold">${formatDuration(duration)}</span>
-                </div>
-                <p class="text-gray-400 text-xs mt-1">${startTime} - now</p>
-              </div>
-            `;
-          }
-          
-          timeline.appendChild(div);
-        }
-        
-        if (sessionsSnapshot.empty && !currentSession) {
-          timeline.innerHTML = `
-            <div class="text-gray-500 text-center py-8">
-              <p>No sessions recorded</p>
-              <p class="text-xs mt-1">Sessions appear when the mill runs</p>
+    // Render a RUN session card
+    function renderRunSession(data, isActive = false) {
+      const duration = isActive ? data.calculated_duration : (data.duration_minutes || 0);
+      const barHeight = calcBarHeight(duration);
+      const startTime = formatTime(data.start);
+      const endTime = isActive ? 'now' : formatTime(data.end);
+      const pieceCount = data.count || 0;
+      
+      // Use average_speed from Firebase for completed sessions, calculate for active
+      const avgTime = isActive 
+        ? calcAvgTime(duration, pieceCount) 
+        : (data.average_speed ? formatAvgSpeed(data.average_speed) : calcAvgTime(duration, pieceCount));
+      
+      const div = document.createElement('div');
+      div.className = `relative flex rounded-lg mb-2 overflow-hidden ${isActive ? 'bg-green-900/60 border-l-4 border-green-400' : 'bg-green-900/40 border-l-4 border-green-500'}`;
+      div.style.minHeight = `${barHeight}px`;
+      if (isActive) div.id = 'activeSession';
+      
+      div.innerHTML = `
+        <div class="flex-1 p-3 flex flex-col justify-between">
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-green-400 font-semibold text-sm">${isActive ? '🟢 RUNNING NOW' : 'RUN'}</span>
+              <span class="text-white font-bold font-mono ${isActive ? 'tabular-nums' : ''}" ${isActive ? 'id="activeTimer"' : ''}>${isActive ? '--:--' : formatDuration(duration)}</span>
             </div>
-          `;
-        } else {
-          // Sort client-side: latest first
-          const sessions = [];
-          sessionsSnapshot.forEach(doc => {
-            sessions.push({ id: doc.id, ...doc.data() });
-          });
-          sessions.sort((a, b) => {
-            const aTime = a.start?.toDate?.() || new Date(0);
-            const bTime = b.start?.toDate?.() || new Date(0);
-            return bTime - aTime; // Descending (latest first)
-          });
-          
-          sessions.forEach(data => {
-            const isRun = data.type === 'RUN';
-            const duration = data.duration_minutes || 0;
-            const barHeight = calcBarHeight(duration);
-            const startTime = formatTime(data.start);
-            const endTime = formatTime(data.end);
-            const pieceCount = data.count || 0;
-            const avgTime = calcAvgTime(duration, pieceCount);
-            
-            const div = document.createElement('div');
-            div.className = `relative flex rounded-lg mb-2 overflow-hidden ${isRun ? 'bg-green-900/40 border-l-4 border-green-500' : 'bg-yellow-900/40 border-l-4 border-yellow-500'}`;
-            div.style.minHeight = `${barHeight}px`;
-            
-            if (isRun) {
-              // RUN session - show all details
-              div.innerHTML = `
-                <div class="flex-1 p-3 flex flex-col justify-between">
-                  <div>
-                    <div class="flex items-center justify-between mb-1">
-                      <span class="text-green-400 font-semibold text-sm">RUN</span>
-                      <span class="text-white font-bold">${formatDuration(duration)}</span>
-                    </div>
-                    <p class="text-gray-400 text-xs">${startTime} - ${endTime}</p>
-                  </div>
-                  <div class="flex items-center justify-between mt-2 pt-2 border-t border-green-800/50">
-                    <div class="text-center">
-                      <p class="text-green-300 font-bold text-lg">${pieceCount}</p>
-                      <p class="text-gray-500 text-xs">pieces</p>
-                    </div>
-                    <div class="text-center">
-                      <p class="text-green-300 font-medium">${avgTime}</p>
-                      <p class="text-gray-500 text-xs">avg cycle</p>
-                    </div>
-                  </div>
-                </div>
-              `;
-            } else {
-              // BREAK session - simpler display
-              div.innerHTML = `
-                <div class="flex-1 p-3 flex flex-col justify-center">
-                  <div class="flex items-center justify-between">
-                    <span class="text-yellow-400 font-semibold text-sm">BREAK</span>
-                    <span class="text-white font-bold">${formatDuration(duration)}</span>
-                  </div>
-                  <p class="text-gray-400 text-xs mt-1">${startTime} - ${endTime}</p>
-                </div>
-              `;
-            }
-            
-            timeline.appendChild(div);
-          });
+            <p class="text-gray-400 text-xs">${startTime} - ${endTime}</p>
+          </div>
+          <div class="flex items-center justify-between mt-2 pt-2 border-t border-green-800/50">
+            <div class="text-center">
+              <p class="text-green-300 font-bold text-lg" ${isActive ? 'id="activePieceCount"' : ''}>${pieceCount}</p>
+              <p class="text-gray-500 text-xs">pieces</p>
+            </div>
+            <div class="text-center">
+              <p class="text-green-300 font-medium" ${isActive ? 'id="activeAvgCycle"' : ''}>${avgTime}</p>
+              <p class="text-gray-500 text-xs">avg speed</p>
+            </div>
+          </div>
+        </div>
+      `;
+      
+      return div;
+    }
+
+    // Render a BREAK session card
+    function renderBreakSession(data, isActive = false) {
+      const duration = isActive ? data.calculated_duration : (data.duration_minutes || 0);
+      const barHeight = Math.max(50, calcBarHeight(duration) * 0.6); // Breaks are shorter visually
+      const startTime = formatTime(data.start);
+      const endTime = isActive ? 'now' : formatTime(data.end);
+      
+      const div = document.createElement('div');
+      div.className = `relative flex rounded-lg mb-2 overflow-hidden ${isActive ? 'bg-yellow-900/60 border-l-4 border-yellow-400' : 'bg-yellow-900/40 border-l-4 border-yellow-500'}`;
+      div.style.minHeight = `${barHeight}px`;
+      if (isActive) div.id = 'activeSession';
+      
+      div.innerHTML = `
+        <div class="flex-1 p-3 flex flex-col justify-center">
+          <div class="flex items-center justify-between">
+            <span class="text-yellow-400 font-semibold text-sm">${isActive ? '🟡 BREAK NOW' : 'BREAK'}</span>
+            <span class="text-white font-bold font-mono ${isActive ? 'tabular-nums' : ''}" ${isActive ? 'id="activeTimer"' : ''}>${isActive ? '--:--' : formatDuration(duration)}</span>
+          </div>
+          <p class="text-gray-400 text-xs mt-1">${startTime} - ${endTime}</p>
+        </div>
+      `;
+      
+      return div;
+    }
+
+    // Render timeline with all sessions
+    function renderTimeline(sessions, activeSession) {
+      timeline.innerHTML = '';
+      
+      // Show active session first if exists
+      if (activeSession) {
+        const isRun = activeSession.type === 'RUN';
+        const card = isRun ? renderRunSession(activeSession, true) : renderBreakSession(activeSession, true);
+        timeline.appendChild(card);
+        
+        // Start stopwatch for active session
+        if (activeSession.start?.seconds) {
+          startStopwatch(activeSession.start.seconds, activeSession.type);
         }
-      } catch (error) {
-        console.error('Error loading sessions:', error);
+      } else {
+        stopStopwatch();
+      }
+      
+      // Show completed sessions (sorted latest first)
+      if (sessions.length === 0 && !activeSession) {
         timeline.innerHTML = `
-          <div class="text-yellow-400 text-center py-4">
-            <p>Sessions unavailable</p>
-            <p class="text-xs mt-1 text-gray-500">May require database index setup</p>
+          <div class="text-gray-500 text-center py-8">
+            <p>No sessions recorded</p>
+            <p class="text-xs mt-1">Sessions appear when the mill runs</p>
           </div>
         `;
+        return;
       }
-
-      // Show error banner only if there were critical errors
-      if (hasError) {
-        const errorBanner = document.createElement('div');
-        errorBanner.className = 'bg-red-900/50 border border-red-600 rounded-lg p-3 text-center mb-4';
-        errorBanner.innerHTML = '<p class="text-red-200 text-sm">Some data could not be loaded</p>';
-        timeline.parentElement.insertBefore(errorBanner, timeline);
-      }
+      
+      sessions.forEach(session => {
+        const isRun = session.type === 'RUN';
+        const card = isRun ? renderRunSession(session) : renderBreakSession(session);
+        timeline.appendChild(card);
+      });
     }
+
+    // Update summary totals
+    function updateSummary(dailyData, activeSession) {
+      let runMinutes = dailyData?.total_run_minutes || 0;
+      let breakMinutes = dailyData?.total_break_minutes || 0;
+      let pieceCount = dailyData?.count || 0;
+      
+      // Add active session duration if today
+      if (isToday && activeSession) {
+        const duration = activeSession.calculated_duration || 0;
+        if (activeSession.type === 'RUN') {
+          runMinutes += duration;
+        } else {
+          breakMinutes += duration;
+        }
+      }
+      
+      totalCount.textContent = pieceCount;
+      totalRun.textContent = formatDuration(runMinutes);
+      totalBreak.textContent = formatDuration(breakMinutes);
+    }
+
+    // Initialize display
+    dateDisplay.textContent = formatDateLong(dateStr);
+    document.getElementById('dateNav').textContent = dateStr;
+
+    // Store data for reactivity
+    let cachedDailyData = null;
+    let cachedSessions = [];
+    let cachedActiveSession = null;
+
+    // Listen to daily summary (real-time)
+    const dailyUnsub = onSnapshot(doc(db, 'daily', dateStr), (docSnap) => {
+      if (docSnap.exists()) {
+        cachedDailyData = docSnap.data();
+      } else {
+        cachedDailyData = null;
+      }
+      updateSummary(cachedDailyData, cachedActiveSession);
+    }, (error) => {
+      console.error('Daily listener error:', error);
+    });
+
+    // Listen to live/furnace for active session (only for today)
+    let liveUnsub = null;
+    if (isToday) {
+      liveUnsub = onSnapshot(doc(db, 'live', 'furnace'), (docSnap) => {
+        if (docSnap.exists()) {
+          const liveData = docSnap.data();
+          const currentSession = liveData.current_session;
+          
+          if (currentSession && currentSession.date === dateStr && !currentSession.end) {
+            // Active session exists
+            const startSeconds = currentSession.start?.seconds || 0;
+            const now = Date.now() / 1000;
+            cachedActiveSession = {
+              ...currentSession,
+              calculated_duration: (now - startSeconds) / 60
+            };
+            
+            // Update active session piece count in real-time
+            const activePieceCount = document.getElementById('activePieceCount');
+            const activeAvgCycle = document.getElementById('activeAvgCycle');
+            if (activePieceCount && cachedActiveSession.type === 'RUN') {
+              activePieceCount.textContent = currentSession.count || 0;
+              if (activeAvgCycle) {
+                activeAvgCycle.textContent = calcAvgTime(cachedActiveSession.calculated_duration, currentSession.count);
+              }
+            }
+          } else {
+            cachedActiveSession = null;
+          }
+          
+          updateSummary(cachedDailyData, cachedActiveSession);
+          renderTimeline(cachedSessions, cachedActiveSession);
+        }
+      }, (error) => {
+        console.error('Live listener error:', error);
+      });
+    }
+
+    // Listen to sessions for this date (real-time)
+    const sessionsQuery = query(
+      collection(db, 'sessions'),
+      where('date', '==', dateStr)
+    );
+
+    const sessionsUnsub = onSnapshot(sessionsQuery, (snapshot) => {
+      loading.classList.add('hidden');
+      
+      const sessions = [];
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        // Only include completed sessions (have an end time)
+        if (data.end) {
+          sessions.push({ id: doc.id, ...data });
+        }
+      });
+      
+      // Sort by start time descending (latest first)
+      sessions.sort((a, b) => {
+        const aTime = a.start?.seconds || 0;
+        const bTime = b.start?.seconds || 0;
+        return bTime - aTime;
+      });
+      
+      cachedSessions = sessions;
+      renderTimeline(cachedSessions, cachedActiveSession);
+    }, (error) => {
+      console.error('Sessions listener error:', error);
+      loading.classList.add('hidden');
+      timeline.innerHTML = `
+        <div class="text-yellow-400 text-center py-4">
+          <p>Sessions unavailable</p>
+          <p class="text-xs mt-1 text-gray-500">Error: ${error.message}</p>
+        </div>
+      `;
+    });
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+      dailyUnsub();
+      sessionsUnsub();
+      if (liveUnsub) liveUnsub();
+      stopStopwatch();
+    });
 
     // Navigation functions
     window.prevDay = function() {
@@ -343,9 +402,6 @@
         window.location.href = `day.html?date=${newDate}`;
       }
     };
-
-    // Load on page ready
-    loadDayData();
   </script>
 </head>
 <body class="min-h-screen bg-gray-900 text-white pb-16">
@@ -405,7 +461,7 @@
 
     <!-- Run-wise Timeline -->
     <div class="bg-gray-800 rounded-xl p-4">
-      <h2 class="text-gray-400 text-xs uppercase mb-3">Run-wise Timeline</h2>
+      <h2 class="text-gray-400 text-xs uppercase mb-3">Session Timeline</h2>
       <div id="timeline" class="timeline-scroll max-h-[60vh] overflow-y-auto pr-1">
         <!-- Generated dynamically -->
       </div>

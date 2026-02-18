@@ -82,17 +82,31 @@ export default function Dashboard() {
     }
   };
 
+  // Get today's date for the Today link
+  const today = new Date().toISOString().split('T')[0];
+
   return (
     <div className="min-h-screen bg-gray-900 text-white">
-      {/* Header */}
-      <header className="bg-gray-800 border-b border-gray-700 px-4 py-3">
+      {/* Navigation */}
+      <nav className="bg-gray-800 border-b border-gray-700 px-4 py-2">
         <div className="flex items-center justify-between">
-          <h1 className="text-xl font-bold">AIS Production</h1>
+          <div className="flex items-center gap-4 overflow-x-auto">
+            <a href="/" className="text-blue-400 font-medium whitespace-nowrap">Live</a>
+            <a href="/history.html" className="text-gray-400 hover:text-white whitespace-nowrap">History</a>
+            <a href={`/day.html?date=${today}`} className="text-gray-400 hover:text-white whitespace-nowrap">Today</a>
+            <a href="/summary.html" className="text-gray-400 hover:text-white whitespace-nowrap">Summary</a>
+            <a href="/review.html" className="text-gray-400 hover:text-white whitespace-nowrap">Review</a>
+          </div>
           <div className="flex items-center gap-2">
             <div className={`w-3 h-3 rounded-full ${getStatusColor()} ${status === 'RUNNING' ? 'animate-pulse' : ''}`}></div>
             <span className="text-sm text-gray-300">{getStatusText()}</span>
           </div>
         </div>
+      </nav>
+
+      {/* Header */}
+      <header className="bg-gray-800 px-4 py-3">
+        <h1 className="text-xl font-bold">AIS Production</h1>
         <p className="text-sm text-gray-400 mt-1">Furnace Camera - Plate Scrap Counter</p>
       </header>
 

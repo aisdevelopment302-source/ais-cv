@@ -117,6 +117,104 @@ detection:
   process_fps: 1               # Analysis rate (frames per second)
 ```
 
+### Mill Stand Counters
+
+AIS-CV supports two mill-stand counting modes:
+
+1. `mill_stand` (zone-based, single view; primarily for offline/video analysis)
+2. `mill_stand_lines` (line-based, multi-view; recommended for live RTSP)
+
+#### `mill_stand` (zone-based)
+
+```yaml
+mill_stand:
+  enabled: true
+  zones:
+    left:
+      x: 370
+      y: 290
+      width: 350
+      height: 50
+      angle: 23
+    right:
+      x: 1250
+      y: 690
+      width: 550
+      height: 50
+      angle: 25
+  counting:
+    luminosity_threshold: 160
+    min_bright_pixels: 100
+    sequence_timeout: 6.0
+    min_travel_time: 0.3
+```
+
+Notes:
+
+- `zones.*` are rotated rectangles in original frame coordinates.
+- Zone calibration is done with `scripts/calibrate_mill_stand.py` (saves into `config/settings.yaml`).
+
+#### `mill_stand_lines` (multi-view line-based)
+
+Configured as a list of `views`, each with its own camera, ROI crop, and two detection lines.
+
+```yaml
+mill_stand_lines:
+  enabled: true
+  views:
+  - name: "View 1"
+    camera:
+      rtsp_url: "rtsp://USER:PASSWORD@NVR_IP:554/cam/realmonitor?channel=2&subtype=1"
+      resolution: [1920, 1080]
+      fps: 25
+    roi:
+      start: [0, 0]
+      end: [1920, 1080]
+    line1:
+      start: [0, 0]
+      end: [0, 0]
+    line2:
+      start: [0, 0]
+      end: [0, 0]
+    # Optional per-view overrides (otherwise inherits mill_stand_lines.counting)
+    counting:
+      luminosity_threshold: 160
+      min_bright_pixels: 100
+  voting:
+    window_seconds: 5.0
+    min_stands_required: null  # null = majority
+  counting:
+    luminosity_threshold: 160
+    min_bright_pixels: 100
+    sequence_timeout: 3.0
+    min_travel_time: 0.0
+    min_consecutive_frames: 2
+    line_thickness: 10
+    hot_metal_filter_enabled: true
+    min_saturation: 20
+    min_red_dominance: 1.1
+    min_warmth_ratio: 1.05
+    target_resolution: [704, 576]
+```
+
+Key fields:
+
+- `views[*].roi`: crop applied before resizing; line coordinates are in original frame coordinates (and are shifted when ROI is applied).
+- `views[*].line1` / `views[*].line2`: entry/exit lines; per-view order must be line1 -> line2.
+- `voting.window_seconds`: how long to wait while collecting per-view detections before voting.
+- `voting.min_stands_required`: required number of views to count (null defaults to majority).
+- `counting.target_resolution`: frames are resized to this for processing; line coordinates are scaled automatically.
+
+Environment variable overrides:
+
+- For live RTSP runs you can override URLs via `.env`:
+  - `RTSP_VIEW1_URL`, `RTSP_VIEW2_URL`, `RTSP_VIEW3_URL`
+
+Related scripts:
+
+- `scripts/calibrate_mill_stand_master.py` (edit ROI/lines/counting with live preview; saves to `config/settings.yaml`)
+- `scripts/run_mill_stand_multi.py` (run multi-view counter from RTSP)
+
 ### Photo Capture
 
 ```yaml

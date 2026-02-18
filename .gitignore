@@ -55,12 +55,19 @@ wheels/
 # CV Data (large files, generated locally)
 ais-cv/data/photos/
 ais-cv/data/logs/
+ais-cv/data/*.csv
+ais-cv/data/*.html
 ais-cv/*.jpg
 ais-cv/*.png
 
+# Local video recordings / analysis inputs
+ais-cv/recordings/
+
 # CV Config with credentials
-ais-cv/config/settings.yaml
 ais-cv/config/firebase-service-account.json
+
+# Firebase deploy cache (generated)
+ais-dashboard/.firebase/
 
 # ===================
 # IDE & Editors

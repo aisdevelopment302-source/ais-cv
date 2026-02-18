@@ -5,6 +5,7 @@ Computer vision module for monitoring production state and counting plate pieces
 ## Features
 
 - **Piece Counting**: Counts hot plate pieces crossing the conveyor using 3-line detection
+- **Mill Stand Counter**: Counts pieces at the mill stand view using dual-zone detection
 - **Session Tracking**: Tracks RUN/BREAK production sessions with duration metrics
 - **Firebase Sync**: Real-time sync to Firestore for dashboards and analytics
 - **Photo Capture**: Saves validation photos for each counted piece
@@ -59,6 +60,39 @@ cd deploy
 sudo bash install-service.sh
 ```
 
+## Mill Stand Counter
+
+For counting pieces at the mill stand view, see the dedicated guide:
+
+```bash
+# Quick start - analyze video with 12% ratio threshold
+python scripts/analyze_mill_stand.py \
+  --video "recordings/mill stand day new.mp4" \
+  --min-peak-ratio 0.12 \
+  --display
+```
+
+**Key scripts:**
+| Script | Description |
+|--------|-------------|
+| `calibrate_mill_stand.py` | Interactive zone positioning tool |
+| `log_pixel_data.py` | Collect pixel data for threshold tuning |
+| `visualize_pixels.py` | Generate statistics and interactive graphs |
+| `analyze_mill_stand.py` | Main piece counter |
+
+### Multi-View Mill Stand Counter (Line-Based)
+
+For live counting using multiple RTSP views with per-view ROI + two-line sequence + majority voting:
+
+```bash
+python scripts/calibrate_mill_stand_master.py
+python scripts/run_mill_stand_multi.py --display
+```
+
+See [Mill Stand Guide](docs/MILL_STAND.md) for details.
+
+See [Mill Stand Guide](docs/MILL_STAND.md) for complete documentation.
+
 ## Documentation
 
 | Document | Description |
@@ -66,6 +100,7 @@ sudo bash install-service.sh
 | [Architecture](docs/ARCHITECTURE.md) | System design, components, and data flow |
 | [Configuration](docs/CONFIGURATION.md) | Complete configuration reference |
 | [Calibration](docs/CALIBRATION.md) | Detection line positioning and threshold tuning |
+| [Mill Stand](docs/MILL_STAND.md) | Mill stand piece counter guide |
 | [Deployment](docs/DEPLOYMENT.md) | Systemd service setup and monitoring |
 | [Firebase](docs/FIREBASE.md) | Firestore schema and integration |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
@@ -89,6 +124,10 @@ ais-cv/
 ├── scripts/
 │   ├── run_counter.py          # Main entry point
 │   ├── calibrate_lines.py      # Line calibration tool
+│   ├── calibrate_mill_stand.py # Mill stand zone calibration
+│   ├── analyze_mill_stand.py   # Mill stand piece counter
+│   ├── log_pixel_data.py       # Pixel data logger
+│   ├── visualize_pixels.py     # Pixel data visualization
 │   ├── test_counter.py         # Testing utility
 │   └── test_firebase.py        # Firebase connection test
 ├── deploy/
@@ -97,6 +136,7 @@ ais-cv/
 ├── data/
 │   ├── logs/                   # Application logs
 │   └── photos/                 # Captured count photos
+├── recordings/                 # Video files for analysis
 ├── docs/                       # Documentation
 └── requirements.txt
 ```
