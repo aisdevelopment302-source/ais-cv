@@ -79,7 +79,7 @@ Firestore
 
 The mill stand counter writes session analytics and live status to Firestore.
 CAM-3 (channel 3, 1 area) counts the same pieces as CAM-2 from a different angle
-and its detections feed into the same median-reconciled joined count. All Firebase
+and its detections feed into the same quorum-confirmed piece count. All Firebase
 writes use `CAM-2` as the camera identifier — there are no separate `CAM-3` keys —
 because both cameras collectively produce a single authoritative piece count.
 
