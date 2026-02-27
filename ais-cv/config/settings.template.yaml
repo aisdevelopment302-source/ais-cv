@@ -2,35 +2,7 @@
 # Copy this to settings.yaml and fill in your values
 # DO NOT commit settings.yaml - it contains credentials!
 
-# Camera Configuration
-camera:
-  name: "Furnace Opening"
-  id: "CAM-1"
-  role: "primary"
-  
-  # Dahua NVR RTSP URL (Sub Stream for processing)
-  # Replace USER, PASSWORD, NVR_IP with actual values
-  rtsp_url: "rtsp://USER:PASSWORD@NVR_IP:554/cam/realmonitor?channel=1&subtype=1"
-  
-  # Stream settings (match NVR config)
-  resolution: [704, 576]
-  fps: 25
-  codec: "h265"
-  
-  # Reconnection settings
-  reconnect_attempts: 5
-  reconnect_delay_seconds: 5
-
-# Region of Interest (to be calibrated with actual camera view)
-roi:
-  furnace_door:
-    x: 100
-    y: 50
-    width: 500
-    height: 400
-  # Will be refined during calibration
-
-# Detection Thresholds (to be tuned during validation)
+# Detection Settings
 detection:
   # Luminosity (0-255) - hot steel glows bright
   luminosity_threshold: 180

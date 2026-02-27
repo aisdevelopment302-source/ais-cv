@@ -1,22 +1,27 @@
-# AIS-CV - Rolling Mill Production Monitoring
+# AIS-CV — Rolling Mill Production Monitor
 
-Computer vision module for monitoring production state and counting plate pieces in a rolling mill.
+Computer vision system for counting hot steel pieces and tracking production sessions in a rolling mill. Runs from a Dahua NVR:
 
-## Features
+| Counter | Camera | Location | Status |
+|---------|--------|----------|--------|
+| **Mill Stand** | CAM-2 (channel 2) — 3 areas | Mill stand | Live, deployed as systemd service |
+| **Mill Stand** | CAM-3 (channel 3) — 1 area | Mill stand (alternate angle) | Live, included in same service |
 
-- **Piece Counting**: Counts hot plate pieces crossing the conveyor using 3-line detection
-- **Mill Stand Counter**: Counts pieces at the mill stand view using dual-zone detection
-- **Session Tracking**: Tracks RUN/BREAK production sessions with duration metrics
-- **Firebase Sync**: Real-time sync to Firestore for dashboards and analytics
-- **Photo Capture**: Saves validation photos for each counted piece
-- **Auto-Recovery**: Handles camera disconnects and system restarts gracefully
+---
+
+## How It Works
+
+### Mill Stand Counter (CAM-2 + CAM-3)
+Counts pieces at the mill stand using **multi-area independent 2-line detection**. Four counting areas are defined across two cameras (3 on CAM-2, 1 on CAM-3), each with its own ROI, entry line (L1), and exit line (L2). A piece is detected per area when it crosses L1 → L2 in order within a configurable timeout. The authoritative count is the **median** across all areas, making the system resilient to a single misbehaving area. CAM-3 counts the same pieces from a different angle, adding a fourth redundant vote. Sessions (RUN/BREAK) and daily/hourly counts are synced to Firebase in real time.
+
+---
 
 ## Quick Start
 
-### 1. Setup Environment
+### 1. Environment Setup
 
 ```bash
-cd ais-cv
+cd /home/adityajain/AIS/ais-cv
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -25,177 +30,133 @@ pip install -r requirements.txt
 ### 2. Configure
 
 ```bash
-# Copy template and edit with your credentials
 cp config/settings.template.yaml config/settings.yaml
 nano config/settings.yaml
 ```
 
-Update these values:
-- `camera.rtsp_url`: Your NVR credentials and IP
-- `counting_lines`: Calibrate based on your camera view (see [Calibration Guide](docs/CALIBRATION.md))
+Fill in:
+- `counting_areas.areas[*].camera_rtsp` — NVR credentials + channel 2 URL
 
-### 3. Calibrate Detection Lines
-
-```bash
-python scripts/calibrate_lines.py
-```
-
-### 4. Run Counter
+### 3. Calibrate
 
 ```bash
-# Run continuously
-python scripts/run_counter.py
-
-# Run for testing (60 seconds)
-python scripts/run_counter.py --duration 60 --test
-
-# Run without Firebase
-python scripts/run_counter.py --no-firebase
+# Mill stand areas/lines (CAM-2)
+python scripts/run_mill_counter.py --display --no-firebase
 ```
 
-### 5. Install as Service (Production)
+### 4. Run
 
 ```bash
-cd deploy
-sudo bash install-service.sh
+# Mill stand counter (CAM-2) with Firebase
+python scripts/run_mill_counter.py
+
+# Without Firebase (testing)
+python scripts/run_mill_counter.py --no-firebase
+
+# With display overlay
+python scripts/run_mill_counter.py --display --no-firebase
 ```
 
-## Mill Stand Counter
-
-For counting pieces at the mill stand view, see the dedicated guide:
+### 5. Deploy as Service
 
 ```bash
-# Quick start - analyze video with 12% ratio threshold
-python scripts/analyze_mill_stand.py \
-  --video "recordings/mill stand day new.mp4" \
-  --min-peak-ratio 0.12 \
-  --display
+sudo cp deploy/ais-mill-counter.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable ais-mill-counter
+sudo systemctl start ais-mill-counter
 ```
 
-**Key scripts:**
-| Script | Description |
-|--------|-------------|
-| `calibrate_mill_stand.py` | Interactive zone positioning tool |
-| `log_pixel_data.py` | Collect pixel data for threshold tuning |
-| `visualize_pixels.py` | Generate statistics and interactive graphs |
-| `analyze_mill_stand.py` | Main piece counter |
-
-### Multi-View Mill Stand Counter (Line-Based)
-
-For live counting using multiple RTSP views with per-view ROI + two-line sequence + majority voting:
-
-```bash
-python scripts/calibrate_mill_stand_master.py
-python scripts/run_mill_stand_multi.py --display
-```
-
-See [Mill Stand Guide](docs/MILL_STAND.md) for details.
-
-See [Mill Stand Guide](docs/MILL_STAND.md) for complete documentation.
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [Architecture](docs/ARCHITECTURE.md) | System design, components, and data flow |
-| [Configuration](docs/CONFIGURATION.md) | Complete configuration reference |
-| [Calibration](docs/CALIBRATION.md) | Detection line positioning and threshold tuning |
-| [Mill Stand](docs/MILL_STAND.md) | Mill stand piece counter guide |
-| [Deployment](docs/DEPLOYMENT.md) | Systemd service setup and monitoring |
-| [Firebase](docs/FIREBASE.md) | Firestore schema and integration |
-| [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
+---
 
 ## Project Structure
 
 ```
 ais-cv/
 ├── config/
-│   ├── settings.template.yaml  # Template (safe to commit)
-│   ├── settings.yaml           # Your config (DO NOT COMMIT)
-│   └── firebase-service-account.json  # Firebase credentials
-├── src/
-│   ├── main.py                 # Production state detection
-│   ├── stream.py               # RTSP stream handler
-│   ├── detector.py             # Hot stock detection
-│   ├── state_machine.py        # RUN/BREAK state logic
-│   ├── counter.py              # Plate counting (3-line detection)
-│   ├── session_manager.py      # Session tracking
-│   └── firebase_client.py      # Firestore integration
-├── scripts/
-│   ├── run_counter.py          # Main entry point
-│   ├── calibrate_lines.py      # Line calibration tool
-│   ├── calibrate_mill_stand.py # Mill stand zone calibration
-│   ├── analyze_mill_stand.py   # Mill stand piece counter
-│   ├── log_pixel_data.py       # Pixel data logger
-│   ├── visualize_pixels.py     # Pixel data visualization
-│   ├── test_counter.py         # Testing utility
-│   └── test_firebase.py        # Firebase connection test
+│   ├── settings.template.yaml        # Template — safe to commit
+│   ├── settings.yaml                 # Live config — DO NOT COMMIT
+│   └── firebase-service-account.json # Firebase credentials — DO NOT COMMIT
+│
+├── src/                              # Core library modules
+│   ├── mill_stand_counter.py         # MillStandCounter — zone-based (legacy/offline)
+│   ├── mill_stand_line_counter.py    # Stand + VotingWindow — per-view line logic
+│   ├── mill_stand_multi_view_counter.py  # MultiViewLineCounter — orchestrates views
+│   ├── cooling_bed_counter.py        # CoolingBedCounter — HSV blob detection
+│   ├── session_manager.py            # SessionManager — RUN/BREAK session tracking
+│   ├── firebase_client.py            # FirebaseClient — Firestore integration
+│   ├── detector.py                   # HotStockDetector — luminosity/motion (legacy)
+│   └── state_machine.py              # ProductionStateMachine (legacy)
+│
+├── scripts/                          # Entry points and tools
+│   ├── run_mill_counter.py           # CAM-2 mill counter — production entry point
+│   ├── run_mill_stand_multi.py       # CAM-2 mill counter — no Firebase (legacy)
+│   ├── run_mill_stand_compare_cam2.py# Camera 2 calibration comparison tool
+│   ├── calibrate_mill_stand_master.py# Interactive view/line calibrator (CAM-2)
+│   ├── calibrate_mill_stand.py       # Zone calibrator (zone-based, offline)
+│   ├── test_firebase.py              # Firebase connection test
+│   └── photo_server.py               # HTTP server for count photos
+│
 ├── deploy/
-│   ├── ais-counter.service     # Systemd service file
-│   └── install-service.sh      # Service installation
+│   ├── ais-mill-counter.service      # Systemd service — CAM-2 mill counter
+│   ├── ais-photo-api.service         # Systemd service — photo API server
+│   └── install-service.sh            # Service installation script
+│
 ├── data/
-│   ├── logs/                   # Application logs
-│   └── photos/                 # Captured count photos
-├── recordings/                 # Video files for analysis
-├── docs/                       # Documentation
+│   ├── logs/
+│   │   ├── mill_counter.log          # Mill counter application log
+│   │   └── state_changes_YYYY-MM-DD.csv
+│   └── photos/                       # Count validation photos
+│
+├── logs/
+│   └── line_brightness_cam2.csv      # CAM-2 per-frame line brightness log
+│
+├── docs/                             # Documentation (you are here)
+├── archive/                          # Superseded detection system
 └── requirements.txt
 ```
 
-## Key Configuration
+---
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `luminosity_threshold` | 150 | Brightness threshold for hot steel (0-255) |
-| `min_bright_pixels` | 80 | Minimum pixels on line to trigger |
-| `sequence_timeout` | 4.0s | Max time for piece to travel L1→L3 |
-| `break_threshold_seconds` | 120 | Idle time before BREAK state |
+## Documentation
 
-See [Configuration Guide](docs/CONFIGURATION.md) for complete reference.
+| Document | Description |
+|----------|-------------|
+| [Architecture](docs/ARCHITECTURE.md) | System design, all components, data flow |
+| [Configuration](docs/CONFIGURATION.md) | Complete `settings.yaml` reference |
+| [Calibration](docs/CALIBRATION.md) | Line positioning and threshold tuning |
+| [Mill Stand](docs/MILL_STAND.md) | Mill stand counter guide (CAM-2) |
+| [Firebase](docs/FIREBASE.md) | Firestore schema and integration |
+| [Deployment](docs/DEPLOYMENT.md) | Systemd service setup and monitoring |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and diagnostics |
 
-## Output
-
-### Logs
-- `data/logs/counter.log` - Application log
-- `data/logs/state_changes_YYYY-MM-DD.csv` - State transitions
-
-### Photos
-Each counted piece saves a photo:
-```
-data/photos/count_1_20260112_143215.jpg
-data/photos/count_2_20260112_143218.jpg
-...
-```
-
-### Firebase (Optional)
-- Real-time status at `live/furnace`
-- Individual counts in `counts/` collection
-- Daily/hourly aggregates
+---
 
 ## Service Management
 
 ```bash
-# Check status
-sudo systemctl status ais-counter
-
-# View logs
-sudo journalctl -u ais-counter -f
-
-# Restart
-sudo systemctl restart ais-counter
-
-# Stop
-sudo systemctl stop ais-counter
+# Mill counter (CAM-2)
+sudo systemctl status ais-mill-counter
+sudo systemctl restart ais-mill-counter
+sudo journalctl -u ais-mill-counter -f
 ```
+
+---
+
+## Firebase Data
+
+### CAM-2 (Mill Stand)
+- `live/mill_stand` — real-time status (count, RUN/BREAK/OFFLINE)
+- `daily/{YYYY-MM-DD_cam2}` — daily totals (`camera: 'CAM-2'`)
+- `hourly/{YYYY-MM-DD}/hours/{HH}` — hourly breakdown
+- `sessions/{id}` — RUN/BREAK sessions (`camera: 'CAM-2'`)
+- *Piece-level detail stored locally only (not pushed to Firestore)*
+
+---
 
 ## Hardware
 
-- **Compute**: Raspberry Pi 5 (or Linux server)
-- **Camera**: Dahua NVR with RTSP (Sub Stream: 704×576, H.265)
+- **Compute**: Linux server or Raspberry Pi 5
+- **Camera**: Dahua NVR — sub stream recommended (704×576, H.265)
+  - Channel 2 → Mill stand (CAM-2)
 - **Network**: Same LAN as NVR
-
-## Support
-
-For issues:
-1. Check [Troubleshooting Guide](docs/TROUBLESHOOTING.md)
-2. Review logs in `data/logs/`
-3. Verify configuration in `settings.yaml`
+- **NVR IP**: `192.168.1.200` (configured in `settings.yaml`)

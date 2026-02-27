@@ -3,22 +3,21 @@
 ## Quick Diagnostics
 
 ```bash
-# Is service running?
-sudo systemctl status ais-counter
+# Is mill stand counter service running?
+sudo systemctl status ais-mill-counter
 
-# Recent logs
-tail -50 data/logs/counter.log
+# Recent logs - mill counter
+tail -50 data/logs/mill-counter.log
+tail -50 data/logs/mill-counter-error.log
 
-# Recent errors
-tail -50 data/logs/counter-error.log
-
-# Camera accessible?
+# Camera accessible? (Channel 2 = CAM-2 mill stand)
 python -c "
 import cv2
 import yaml
 with open('config/settings.yaml') as f:
     config = yaml.safe_load(f)
-cap = cv2.VideoCapture(config['camera']['rtsp_url'])
+rtsp = config['counting_areas']['areas'][0]['camera_rtsp']
+cap = cv2.VideoCapture(rtsp)
 print('OK' if cap.isOpened() else 'FAILED')
 cap.release()
 "
@@ -37,8 +36,9 @@ python scripts/test_firebase.py
 
 1. **Wrong RTSP URL**
    ```bash
-   # Test URL with ffprobe
-   ffprobe -rtsp_transport tcp "rtsp://admin:pass@192.168.1.100:554/cam/realmonitor?channel=1&subtype=1" 2>&1 | head -5
+   # Test URL with ffprobe (NVR IP: 192.168.1.200)
+   # Channel 2 = CAM-2 (mill stand)
+   ffprobe -rtsp_transport tcp "rtsp://admin:pass@192.168.1.200:554/cam/realmonitor?channel=2&subtype=1" 2>&1 | head -5
    ```
    - Verify IP address, credentials, and channel number
    - Try sub stream (subtype=1) vs main stream (subtype=0)
@@ -46,14 +46,14 @@ python scripts/test_firebase.py
 2. **Network issues**
    ```bash
    # Check if NVR is reachable
-   ping 192.168.1.100
-   
+   ping 192.168.1.200
+
    # Check RTSP port
-   nc -zv 192.168.1.100 554
+   nc -zv 192.168.1.200 554
    ```
 
 3. **NVR busy/overloaded**
-   - Too many simultaneous streams
+   - The mill counter opens multiple streams simultaneously — the NVR must support concurrent sub-stream connections
    - Reduce other clients accessing NVR
    - Use sub stream instead of main stream
 
@@ -66,7 +66,6 @@ python scripts/test_firebase.py
 **Causes & Solutions:**
 
 1. **Stream timeout**
-   - Increase `reconnect_delay_seconds` in config
    - Check network stability
 
 2. **Buffer overflow**
@@ -79,38 +78,33 @@ python scripts/test_firebase.py
 
 ### Detection Issues
 
-#### Symptom: Missing counts (CV count < actual)
+#### Symptom: Missing counts - mill counter (CV count < actual)
 
 **Causes & Solutions:**
 
-1. **Threshold too high**
+1. **Not enough views agreeing** (majority voting)
    ```yaml
-   # In settings.yaml, try lowering:
-   counting:
-     luminosity_threshold: 130  # Was 150
+   # In settings.yaml, lower votes required:
+   mill_stand_lines:
+     voting:
+       min_stands_required: 1  # Was null (majority)
    ```
 
-2. **Lines too short**
-   - Run calibration tool: `python scripts/calibrate_lines.py`
-   - Extend lines to cover full piece path
-
-3. **Pieces too fast**
+2. **Voting window too short**
    ```yaml
-   # Reduce frame requirement:
-   counting:
-     min_consecutive_frames: 1  # Was 2
+   mill_stand_lines:
+     voting:
+       window_seconds: 8.0  # Was 5.0
    ```
 
-4. **Sequence timeout too short**
+3. **Hot metal filter too aggressive**
    ```yaml
-   # Increase timeout:
-   counting:
-     sequence_timeout: 6.0  # Was 4.0
+   mill_stand_lines:
+     counting:
+       hot_metal_filter_enabled: false  # Disable temporarily to diagnose
    ```
 
-5. **Pieces too dim**
-   - Check if pieces are cooling before reaching lines
-   - Move lines closer to furnace
+4. **Lines misaligned** — re-run `scripts/calibrate_mill_stand_master.py`
 
 #### Symptom: Extra counts (CV count > actual)
 
@@ -123,7 +117,6 @@ python scripts/test_firebase.py
 
 2. **Noise triggers**
    ```yaml
-   # Increase thresholds:
    counting:
      luminosity_threshold: 170  # Was 150
      min_bright_pixels: 120     # Was 80
@@ -180,7 +173,7 @@ python scripts/test_firebase.py
 #### Symptom: Sessions not showing in Firebase
 
 1. **Firebase not initialized**
-   - Check `data/logs/counter.log` for Firebase errors
+   - Check `data/logs/mill-counter.log` for Firebase errors
    - Verify service account file
 
 2. **Network issues**
@@ -210,25 +203,21 @@ python scripts/test_firebase.py
 2. Verify service account has correct role
 3. Regenerate service account key
 
-#### Symptom: Data not appearing in dashboard
+#### Symptom: Mill stand data not appearing in dashboard
 
-1. Check `live/furnace` document exists in Firestore
-2. Verify date field matches today's date
-3. Check browser console for errors
+1. Check `live/mill_stand` document exists in Firestore
+2. Check `daily/{today}` for a document with `camera: 'CAM-2'`
+3. Verify `ais-mill-counter` service is running and Firebase-enabled
 
 ### Service Issues
 
 #### Symptom: Service won't start
 
 ```bash
-# Check service status
-sudo systemctl status ais-counter
-
-# Check for errors
-sudo journalctl -u ais-counter -n 50
-
-# Verify paths in service file
-cat /etc/systemd/system/ais-counter.service
+# Mill counter
+sudo systemctl status ais-mill-counter
+sudo journalctl -u ais-mill-counter -n 50
+cat /etc/systemd/system/ais-mill-counter.service
 ```
 
 Common fixes:
@@ -239,11 +228,9 @@ Common fixes:
 #### Symptom: Service starts then stops
 
 ```bash
-# Check exit code
-sudo journalctl -u ais-counter | grep "Main process exited"
-
-# Check Python errors
-cat data/logs/counter-error.log
+# Mill counter
+sudo journalctl -u ais-mill-counter | grep "Main process exited"
+cat data/logs/mill-counter-error.log
 ```
 
 Common causes:
@@ -253,20 +240,19 @@ Common causes:
 
 #### Symptom: High CPU usage
 
-1. Check process:
+1. Check processes:
    ```bash
-   top -p $(pgrep -f run_counter)
+   top -p $(pgrep -f run_mill_counter)
    ```
 
 2. Possible causes:
    - Main stream instead of sub stream (higher resolution)
-   - Too high FPS processing
+   - Mill counter opens 3 streams simultaneously — check NVR load
    - Memory leak (check with `htop`)
 
 3. Solutions:
-   - Use sub stream (704x576)
-   - Add sleep between frames
-   - Restart service periodically (cron)
+   - Use sub stream (704x576 or 1920x1080 sub for mill)
+   - Restart services periodically (cron)
 
 ### Memory Issues
 
@@ -296,9 +282,9 @@ Common causes:
    ```bash
    # Delete photos older than 7 days
    find data/photos -mtime +7 -delete
-   
+
    # Truncate large logs
-   > data/logs/counter.log
+   > data/logs/mill-counter.log
    ```
 
 3. Add to crontab:
@@ -316,15 +302,7 @@ logging:
   level: "DEBUG"
 
 # Or run directly with verbose
-python scripts/run_counter.py --test
-```
-
-### Capture debug frames
-
-```python
-# Add to run_counter.py for debugging
-if status['L1']['triggered']:
-    cv2.imwrite(f"debug/l1_{time.time()}.jpg", frame)
+python scripts/run_mill_counter.py --test
 ```
 
 ### Test individual components
@@ -335,10 +313,9 @@ from src.stream import RTSPStream
 stream = RTSPStream("rtsp://...")
 print(stream.connect())
 
-# Test detector
-from src.counter import PlateCounter
-counter = PlateCounter(lines_config, counting_config)
-# Feed test frames...
+# Test mill counter
+from src.mill_stand_multi_view_counter import MultiViewLineCounter
+counter = MultiViewLineCounter(views_config, counting_config, voting_config)
 
 # Test Firebase
 from src.firebase_client import FirebaseClient
@@ -354,8 +331,9 @@ When reporting issues, include:
 
 1. **Logs**
    ```bash
-   tail -100 data/logs/counter.log
-   tail -50 data/logs/counter-error.log
+   # For mill counter:
+   tail -100 data/logs/mill-counter.log
+   tail -50 data/logs/mill-counter-error.log
    ```
 
 2. **Configuration** (redact credentials!)
@@ -372,8 +350,8 @@ When reporting issues, include:
 
 4. **Service status**
    ```bash
-   sudo systemctl status ais-counter
-   sudo journalctl -u ais-counter -n 50
+   sudo systemctl status ais-mill-counter
+   sudo journalctl -u ais-mill-counter -n 50
    ```
 
 ## Related Documentation

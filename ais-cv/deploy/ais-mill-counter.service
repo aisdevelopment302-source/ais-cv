@@ -1,5 +1,5 @@
 [Unit]
-Description=AIS Plate Counter Service
+Description=AIS Mill Stand Counter Service (CAM-2)
 Documentation=https://github.com/your-repo/ais
 After=network.target network-online.target
 Wants=network-online.target
@@ -10,14 +10,14 @@ User=adityajain
 Group=adityajain
 WorkingDirectory=/home/adityajain/AIS/ais-cv
 Environment=PATH=/home/adityajain/AIS/ais-cv/venv/bin:/usr/bin:/bin
-ExecStart=/home/adityajain/AIS/ais-cv/venv/bin/python scripts/run_counter.py
+ExecStart=/home/adityajain/AIS/ais-cv/venv/bin/python scripts/run_mill_counter.py
 Restart=always
 RestartSec=10
-StandardOutput=append:/home/adityajain/AIS/ais-cv/data/logs/counter.log
-StandardError=append:/home/adityajain/AIS/ais-cv/data/logs/counter-error.log
+StandardOutput=append:/home/adityajain/AIS/ais-cv/data/logs/mill-counter.log
+StandardError=append:/home/adityajain/AIS/ais-cv/data/logs/mill-counter-error.log
 
-# Give time for camera connection
-TimeoutStartSec=60
+# Give time for camera connection (3 streams opened on startup)
+TimeoutStartSec=90
 
 # Watchdog - restart if no response
 WatchdogSec=300

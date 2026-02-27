@@ -1,270 +1,337 @@
-camera:
-  name: Furnace Opening
-  id: CAM-1
-  role: primary
-  rtsp_url: rtsp://USER:PASSWORD@NVR_IP:554/cam/realmonitor?channel=1&subtype=1
-  resolution:
-  - 704
-  - 576
-  fps: 25
-  codec: h265
-  reconnect_attempts: 5
-  reconnect_delay_seconds: 5
-roi:
-  furnace_door:
-    x: 100
-    y: 50
-    width: 500
-    height: 400
+counting_areas:
+  areas:
+  - bg_delta: 30
+    camera_rtsp: rtsp://admin:bhoothnath123@192.168.1.200:554/cam/realmonitor?channel=2&subtype=1
+    line1:
+      end:
+      - 231
+      - 280
+      start:
+      - 232
+      - 235
+    line2:
+      end:
+      - 206
+      - 216
+      start:
+      - 182
+      - 261
+    min_line_pixels: 20
+    name: Area 1
+    order: 1
+    roi:
+      end:
+      - 267
+      - 302
+      start:
+      - 125
+      - 197
+    use_bg_subtraction: true
+  - bg_delta: 30
+    camera_rtsp: rtsp://admin:bhoothnath123@192.168.1.200:554/cam/realmonitor?channel=2&subtype=1
+    line1:
+      end:
+      - 592
+      - 466
+      start:
+      - 617
+      - 426
+    line2:
+      end:
+      - 617
+      - 474
+      start:
+      - 656
+      - 417
+    min_line_pixels: 10
+    name: Area 2
+    order: 2
+    roi:
+      end:
+      - 684
+      - 491
+      start:
+      - 560
+      - 397
+    use_bg_subtraction: true
+  - bg_delta: 30
+    camera_rtsp: rtsp://admin:bhoothnath123@192.168.1.200:554/cam/realmonitor?channel=2&subtype=1
+    line1:
+      end:
+      - 227
+      - 209
+      start:
+      - 239
+      - 169
+    line2:
+      end:
+      - 196
+      - 202
+      start:
+      - 220
+      - 159
+    min_line_pixels: 30
+    name: Area 3
+    order: 3
+    roi:
+      end:
+      - 286
+      - 219
+      start:
+      - 166
+      - 139
+    use_bg_subtraction: true
+  - bg_delta: 30
+    camera_rtsp: rtsp://admin:bhoothnath123@192.168.1.200:554/cam/realmonitor?channel=3&subtype=1
+    line1:
+      end:
+      - 508
+      - 103
+      start:
+      - 516
+      - 68
+    line2:
+      end:
+      - 482
+      - 101
+      start:
+      - 491
+      - 67
+    min_line_pixels: 10
+    name: CAM3 Area 1
+    order: 4
+    roi:
+      end:
+      - 556
+      - 130
+      start:
+      - 440
+      - 48
+    use_bg_subtraction: true
+  divergence_warn_threshold: 3
 detection:
-  luminosity_threshold: 180
+  break_threshold_seconds: 60
   luminosity_min_pixels: 1000
-  motion_threshold: 25
-  motion_min_area: 500
-  break_threshold_seconds: 300
+  luminosity_threshold: 180
   min_run_duration_seconds: 10
-counting_lines:
-  line1:
-    start:
-    - 480
-    - 225
-    end:
-    - 540
-    - 215
-  line2:
-    start:
-    - 525
-    - 280
-    end:
-    - 585
-    - 270
-  line3:
-    start:
-    - 565
-    - 335
-    end:
-    - 630
-    - 325
-  flow_direction:
-    start:
-    - 530
-    - 215
-    end:
-    - 620
-    - 330
-counting:
-  luminosity_threshold: 200
-  min_bright_pixels: 150
-  sequence_timeout: 4.0
-  min_travel_time: 0.2
-  line_thickness: 10
-  min_consecutive_frames: 3
-  human_filter_enabled: true
-  max_aspect_ratio: 1.5
-  min_blob_width: 30
-  hot_metal_filter_enabled: true
-  min_red_dominance: 1.15
-  min_saturation: 30
-  min_warmth_ratio: 1.1
+  motion_min_area: 500
+  motion_threshold: 25
+logging:
+  level: INFO
+  output_dir: data/logs
+  rotation: daily
 mill_stand:
-  enabled: true
-  video_file: recordings/mill stand view.mp4
   camera:
-    rtsp_url: rtsp://USER:PASSWORD@NVR_IP:554/cam/realmonitor?channel=2&subtype=1
+    fps: 25
     resolution:
     - 1920
     - 1080
-    fps: 25
-  zones:
-    left:
-      x: 1030
-      y: 450
-      width: 90
-      height: 50
-      angle: 14
-    right:
-      x: 1320
-      y: 610
-      width: 70
-      height: 60
-      angle: 27
+    rtsp_url: rtsp://admin:bhoothnath123@192.168.1.200:554/cam/realmonitor?channel=2&subtype=1
   counting:
+    hot_metal_filter_enabled: true
     luminosity_threshold: 160
     min_bright_pixels: 100
-    sequence_timeout: 6.0
-    min_travel_time: 0.3
     min_consecutive_frames: 2
-    hot_metal_filter_enabled: true
-    min_saturation: 20
     min_red_dominance: 1.1
+    min_saturation: 20
+    min_travel_time: 0.3
     min_warmth_ratio: 1.05
+    sequence_timeout: 6.0
     target_resolution:
     - 704
     - 576
-mill_stand_lines:
   enabled: true
+  peak_roi:
+    x1: 412
+    x2: 641
+    y1: 68
+    y2: 104
+  peak_roi_cam2:
+    x1: 135
+    x2: 233
+    y1: 204
+    y2: 257
+  video_file: recordings/mill stand view.mp4
+  zones:
+    left:
+      angle: 14
+      height: 50
+      width: 90
+      x: 1030
+      y: 450
+    right:
+      angle: 27
+      height: 60
+      width: 70
+      x: 1320
+      y: 610
+mill_stand_lines:
+  counting:
+    hot_metal_filter_enabled: true
+    line_thickness: 10
+    luminosity_threshold: 160
+    min_bright_pixels: 100
+    min_consecutive_frames: 2
+    min_red_dominance: 1.1
+    min_saturation: 20
+    min_travel_time: 0.0
+    min_warmth_ratio: 1.05
+    sequence_timeout: 3.0
+    target_resolution:
+    - 704
+    - 576
+  enabled: true
+  stands:
+  - direction: left_to_right
+    entry_line:
+      end:
+      - 1410
+      - 730
+      start:
+      - 1350
+      - 590
+    exit_line:
+      end:
+      - 650
+      - 400
+      start:
+      - 670
+      - 370
+    name: Stand 1
   views:
-  - name: View 1
-    camera:
-      rtsp_url: rtsp://USER:PASSWORD@NVR_IP:554/cam/realmonitor?channel=2&subtype=1
+  - camera:
+      fps: 25
       resolution:
       - 1920
       - 1080
-      fps: 25
+      rtsp_url: rtsp://admin:bhoothnath123@192.168.1.200:554/cam/realmonitor?channel=2&subtype=1
     counting:
+      hot_metal_filter_enabled: false
+      line_thickness: 3
       luminosity_threshold: 160
       min_bright_pixels: 100
-      sequence_timeout: 3.0
-      min_travel_time: 0.0
       min_consecutive_frames: 2
-      line_thickness: 3
-      hot_metal_filter_enabled: false
-      min_saturation: 20
       min_red_dominance: 1.1
+      min_saturation: 20
+      min_travel_time: 0.0
       min_warmth_ratio: 1.05
+      sequence_timeout: 3.0
       target_resolution: &id001
       - 704
       - 576
     line1:
-      start:
-      - 189
-      - 209
       end:
       - 180
       - 238
-    line2:
       start:
-      - 198
-      - 214
+      - 189
+      - 209
+    line2:
       end:
       - 179
       - 255
-    roi:
       start:
-      - 126
-      - 189
+      - 198
+      - 214
+    name: View 1
+    roi:
       end:
       - 207
       - 251
-  - name: View 2
-    camera:
-      rtsp_url: rtsp://USER:PASSWORD@NVR_IP:554/cam/realmonitor?channel=3&subtype=1
+      start:
+      - 126
+      - 189
+  - camera:
+      fps: 25
       resolution:
       - 1920
       - 1080
-      fps: 25
+      rtsp_url: rtsp://admin:bhoothnath123@192.168.1.200:554/cam/realmonitor?channel=2&subtype=1
     counting:
+      hot_metal_filter_enabled: false
+      line_thickness: 3
       luminosity_threshold: 160
       min_bright_pixels: 100
-      sequence_timeout: 3.0
-      min_travel_time: 0.0
       min_consecutive_frames: 2
-      line_thickness: 3
-      hot_metal_filter_enabled: false
-      min_saturation: 20
       min_red_dominance: 1.1
+      min_saturation: 20
+      min_travel_time: 0.0
       min_warmth_ratio: 1.05
+      sequence_timeout: 3.0
       target_resolution: *id001
     line1:
-      start:
-      - 234
-      - 59
       end:
-      - 225
-      - 63
+      - 204
+      - 284
+      start:
+      - 239
+      - 246
     line2:
-      start:
-      - 241
-      - 75
       end:
-      - 231
-      - 81
+      - 686
+      - 405
+      start:
+      - 649
+      - 466
+    line3:
+      end:
+      - 227
+      - 175
+      start:
+      - 193
+      - 192
+    name: View 2
     roi:
-      start:
-      - 209
-      - 53
       end:
-      - 244
-      - 88
-  - name: View 3
-    camera:
-      rtsp_url: rtsp://USER:PASSWORD@NVR_IP:554/cam/realmonitor?channel=4&subtype=1
+      - 47
+      - 174
+      start:
+      - 47
+      - 173
+  - camera:
+      fps: 25
       resolution:
       - 1920
       - 1080
-      fps: 25
+      rtsp_url: rtsp://admin:bhoothnath123@192.168.1.200:554/cam/realmonitor?channel=2&subtype=1
     counting:
+      hot_metal_filter_enabled: false
+      line_thickness: 3
       luminosity_threshold: 160
       min_bright_pixels: 100
-      sequence_timeout: 3.0
-      min_travel_time: 0.0
       min_consecutive_frames: 2
-      line_thickness: 3
-      hot_metal_filter_enabled: false
-      min_saturation: 20
       min_red_dominance: 1.1
+      min_saturation: 20
+      min_travel_time: 0.0
       min_warmth_ratio: 1.05
+      sequence_timeout: 3.0
       target_resolution: *id001
     line1:
-      start:
-      - 567
-      - 79
       end:
       - 558
       - 100
-    line2:
       start:
-      - 475
-      - 74
+      - 567
+      - 79
+    line2:
       end:
       - 474
       - 96
+      start:
+      - 475
+      - 74
+    name: View 3
     roi:
+      end:
+      - 641
+      - 104
       start:
       - 412
-      - 53
-      end:
-      - 632
-      - 127
-  stands:
-  - name: Stand 1
-    direction: left_to_right
-    entry_line:
-      start:
-      - 1350
-      - 590
-      end:
-      - 1410
-      - 730
-    exit_line:
-      start:
-      - 670
-      - 370
-      end:
-      - 650
-      - 400
+      - 68
   voting:
-    window_seconds: 5.0
     min_stands_required: null
-  counting:
-    luminosity_threshold: 160
-    min_bright_pixels: 100
-    sequence_timeout: 3.0
-    min_travel_time: 0.0
-    min_consecutive_frames: 2
-    line_thickness: 10
-    hot_metal_filter_enabled: true
-    min_saturation: 20
-    min_red_dominance: 1.1
-    min_warmth_ratio: 1.05
-    target_resolution:
-    - 704
-    - 576
+    window_seconds: 5.0
 photos:
-  output_dir: data/photos
   on_state_change: true
+  output_dir: data/photos
   periodic_interval_seconds: 300
-logging:
-  output_dir: data/logs
-  level: INFO
-  rotation: daily

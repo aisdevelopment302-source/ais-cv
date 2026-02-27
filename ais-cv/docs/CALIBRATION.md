@@ -1,313 +1,166 @@
 # AIS-CV Calibration Guide
 
-## Overview
+## CAM-2 Mill Stand Calibration (`run_mill_counter.py`)
 
-Proper calibration is essential for accurate piece counting. This guide covers:
-1. Detection line positioning
-2. Threshold tuning
-3. Validation procedures
+The mill stand counter has a built-in calibration UI accessible via `--display`.
+No separate calibration script is needed.
 
-## Prerequisites
-
-- Camera connected and streaming
-- `settings.yaml` configured with RTSP URL
-- Python environment activated
-
-## Line Calibration
-
-### Understanding the 3-Line System
-
-```
-                    CONVEYOR FLOW
-                        ↓
-    ┌─────────────────────────────────────────┐
-    │                                         │
-    │    L1 (Green) ═══════════════           │  ← First detection
-    │                                         │
-    │    L2 (Yellow) ═══════════════          │  ← Confirmation
-    │                                         │
-    │    L3 (Red) ═══════════════             │  ← Final count
-    │                                         │
-    └─────────────────────────────────────────┘
-```
-
-**Counting Logic:**
-1. Piece triggers L1 (confirmed after N consecutive frames)
-2. Same piece triggers L2 (within timeout window)
-3. Same piece triggers L3 (count registered!)
-
-### Interactive Calibration Tool
+### Launch Calibration Mode
 
 ```bash
 cd /home/adityajain/AIS/ais-cv
 source venv/bin/activate
-python scripts/calibrate_lines.py
+python scripts/run_mill_counter.py --display --no-firebase
 ```
 
-**Controls:**
-| Key | Action |
-|-----|--------|
-| `1`, `2`, `3` | Select Line 1/2/3 |
-| `S` | Select Start point |
-| `E` | Select End point |
-| `Arrow Keys` | Move point by 1 pixel |
-| `W/X/Z/D` | Move point by 10 pixels |
-| `A` | Select flow arrow |
-| `C` | Capture fresh frame from camera |
-| `P` | Print current coordinates |
-| `V` | Save to settings.yaml |
-| `R` | Reset to defaults |
-| `Q/ESC` | Quit |
+The live CAM-2 feed appears in a window with all configured areas drawn on top.
 
-### Line Positioning Guidelines
+### Controls
 
-1. **Line Orientation**: Lines should be perpendicular to conveyor flow
-2. **Line Spacing**: Allow enough space for piece to fully pass one line before reaching next
-3. **Line Length**: Span the full width where pieces travel
-4. **Avoid Edges**: Stay away from frame edges where lighting varies
+| Key / Action | Effect |
+|---|---|
+| `Tab` | Cycle focus to next area (within this camera window) |
+| `1` – `9` | Jump directly to area N (1-indexed) |
+| **Left-click + drag** handle | Move ROI corner or L1/L2 endpoint |
+| `S` | Save focused area's current ROI + lines to `config/settings.yaml` |
+| `R` | Reset all detectors and all area counts |
+| `Space` | Pause / resume detection |
+| `H` | Print key help to console |
+| `Q` / Esc | Quit |
 
-**Good Placement:**
-```
-   Line crosses path where ALL pieces will pass
-   ───────────────────────────────
-   |                             |
-   |      HOT PIECE              |
-   |      ▓▓▓▓▓▓▓▓▓▓             |
-   |                             |
-   ───────────────────────────────
-```
+Handles (filled circles) are larger and brighter for the focused area.
+Unfocused areas are drawn dimmer.
 
-**Bad Placement:**
-```
-   Line too short - some pieces might miss it
-   ─────────────
-   |                             |
-   |      HOT PIECE              |
-   |      ▓▓▓▓▓▓▓▓▓▓             |  ← This piece would be missed!
-   |                             |
-```
+### Per-Area Calibration Workflow
 
-### Saving Configuration
+Repeat these steps for each area (Area 1, Area 2, Area 3):
 
-After positioning lines:
-1. Press `V` to save to `settings.yaml`
-2. Verify saved coordinates with `P`
+1. **Focus the area** — press `Tab` or the corresponding number key.
+   The title bar shows `FOCUSED: Area N`.
 
-The saved config will look like:
+2. **Position the ROI rectangle** — drag the four corner handles so the rectangle
+   tightly encloses the section of the steel bar path that belongs to this area.
+   - The ROI is the **detection gate**: only pixels inside it can trigger this area's
+     lines. A bright piece outside the ROI will not affect this area.
+   - Make the ROI as small as possible while still fully containing L1 and L2.
+
+3. **Position L1 (entry line)** — drag its two endpoints so the line crosses the
+   bar path **before** the piece enters the measurement zone.
+   L1 is drawn in the area's primary color.
+
+4. **Position L2 (exit line)** — drag its endpoints so the line crosses the bar
+   path **after** L1. L2 is drawn slightly darker than L1.
+   - L1 and L2 must both lie **inside** the ROI rectangle, otherwise the masked
+     frame will have no pixels on those lines and detection will never fire.
+
+5. **Verify** — watch the HUD while a piece passes. You should see:
+   - `L1: ON` flash briefly as the piece crosses L1
+   - `L2: ON` flash shortly after
+   - Area count increment and the flash banner appear
+
+6. **Save** — press `S`. The log output confirms:
+   ```
+   INFO  Saved area 0 (Area 1): ROI=(110,192)-(267,295)  L1=(239,242)-(215,288)  L2=(172,276)-(202,224)
+   ```
+   The number after "area" is the YAML array index (0-based). If it's wrong,
+   check that `order` values in `settings.yaml` match the expected sort order.
+
+### What Gets Saved
+
+Pressing `S` writes to `config/settings.yaml` under
+`counting_areas.areas[yaml_idx]`:
+
 ```yaml
-counting_lines:
-  line1:
-    start: [480, 225]
-    end: [540, 215]
-  line2:
-    start: [525, 280]
-    end: [585, 270]
-  line3:
-    start: [565, 335]
-    end: [630, 325]
+roi:
+  start: [x1, y1]
+  end:   [x2, y2]
+line1:
+  start: [x, y]
+  end:   [x, y]
+line2:
+  start: [x, y]
+  end:   [x, y]
+min_line_pixels: N
 ```
 
-## Threshold Tuning
+The `name`, `order`, `camera_rtsp`, `use_bg_subtraction`, and `bg_delta` fields
+are not modified by the `S` key save — edit those directly in `settings.yaml`.
 
-### Key Thresholds
+### `min_line_pixels` Quick Tuning (`[` / `]` Keys)
 
-| Parameter | What It Does | Too Low | Too High |
-|-----------|--------------|---------|----------|
-| `luminosity_threshold` | Brightness cutoff for "hot" | False positives from ambient light | Misses cooler pieces |
-| `min_bright_pixels` | Pixels needed to trigger | Noise triggers detection | Small pieces missed |
-| `min_consecutive_frames` | Frames to confirm detection | More noise, less reliability | Slow pieces might not register enough frames |
+In `--display` mode, with an area focused:
 
-### Tuning Procedure
+| Key | Effect |
+|-----|--------|
+| `[` | Decrease focused area's `min_line_pixels` by 1 and auto-save |
+| `]` | Increase focused area's `min_line_pixels` by 1 and auto-save |
 
-1. **Start Conservative**: Begin with higher thresholds
-2. **Run Test Mode**: `python run_counter.py --test`
-3. **Observe Output**: Watch for false positives/negatives
-4. **Adjust Incrementally**: Change one parameter at a time
+The current value is shown in the HUD: `min_px=N`. Use this while pieces are
+passing to find the smallest value that reliably triggers without false positives.
 
-**Test Mode Output:**
-```
-14:32:15 | L1:  245px | L2:    -   | L3:    -   | Count:5 | RUN
-14:32:15 | L1:  287px | L2:    -   | L3:    -   | Count:5 | RUN
-14:32:16 | L1:    -   | L2:  198px | L3:    -   | Count:5 | RUN
-14:32:16 | L1:    -   | L2:  210px | L3:    -   | Count:5 | RUN
-14:32:17 | L1:    -   | L2:    -   | L3:  189px | Count:5 | RUN
-*** PIECE #6 COUNTED | Travel: 1.89s | Conf: 85% (HIGH) ***
-```
+### Background Subtraction Tuning (`bg_delta`)
 
-### Luminosity Threshold
+When `use_bg_subtraction: true` is set for an area, the detection threshold is
+**relative** to the local background, not an absolute pixel value. The HUD
+shows `bg+N` for the focused area when this mode is active.
 
-**Finding the Right Value:**
-```bash
-# Capture a frame during production
-python -c "
-import cv2
-import yaml
-import numpy as np
+**`bg_delta` tuning procedure:**
 
-with open('config/settings.yaml') as f:
-    config = yaml.safe_load(f)
+1. Run `--display --no-firebase` during production.
+2. Watch the HUD line state (`L1: ON / off`) as pieces pass and between passes.
+3. If lines trigger spuriously between pieces: **raise** `bg_delta` (e.g. 30 → 40).
+4. If pieces are not triggering lines: **lower** `bg_delta` (e.g. 30 → 20).
+5. Edit `config/settings.yaml` directly under the area's `bg_delta:` field.
+6. Restart the counter — changes take effect immediately on next run.
 
-cap = cv2.VideoCapture(config['camera']['rtsp_url'])
-for _ in range(10):
-    cap.grab()
-ret, frame = cap.read()
-cap.release()
+**Baseline warm-up:** On startup the EMA baseline is seeded from the first
+frame seen on each line. At `bg_alpha=0.05` the baseline stabilises after
+approximately **20 seconds** of idle frames. During this warm-up window,
+detection sensitivity may be slightly reduced if the camera starts pointed at
+a bright scene. This is expected behaviour.
 
-gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-print(f'Min: {gray.min()}, Max: {gray.max()}, Mean: {gray.mean():.1f}')
+### Verifying Detection After Calibration
 
-# Check brightness distribution
-hot_pixels = np.sum(gray > 150)
-very_hot = np.sum(gray > 180)
-print(f'Pixels > 150: {hot_pixels}')
-print(f'Pixels > 180: {very_hot}')
-
-cv2.imwrite('data/calibration_frame.jpg', frame)
-"
-```
-
-**Typical Values:**
-- Hot steel glow: 180-255 brightness
-- Warm steel: 140-180 brightness
-- Background: 0-100 brightness
-
-**Recommended Starting Points:**
-| Condition | `luminosity_threshold` |
-|-----------|------------------------|
-| Very hot furnace | 180 |
-| Normal production | 150 |
-| Cooler pieces | 130 |
-
-### Minimum Bright Pixels
-
-This prevents small bright spots (reflections, sparks) from triggering detection.
-
-**Calculation Guide:**
-```
-Expected piece size on line: ~50-100 pixels wide
-Line thickness: 10 pixels (default)
-Minimum coverage: 50%
-
-min_bright_pixels = (piece_width × line_thickness × 0.5)
-                  = (75 × 10 × 0.5)
-                  = 375 pixels (theoretical)
-
-Practical: Start at 80-100, increase if false positives
-```
-
-### Sequence Timeout
-
-Maximum time for a piece to travel from L1 to L3.
-
-**Measure Actual Travel Time:**
-1. Run in test mode
-2. Observe travel times in log: `Travel: 1.89s`
-3. Set timeout to 2-3x the maximum observed
-
-**Typical Values:**
-| Conveyor Speed | Timeout |
-|----------------|---------|
-| Fast | 2.0s |
-| Normal | 4.0s |
-| Slow | 6.0s |
-
-### Minimum Travel Time
-
-Filters out noise that triggers all lines simultaneously.
-
-**Rule of Thumb:**
-- Set to 0.2s (200ms) minimum
-- Increase if seeing phantom counts with 0.0s travel time
-
-## Validation
-
-### Live Validation Procedure
-
-1. Run counter: `python run_counter.py --test`
-2. Manually count pieces for 30+ minutes
-3. Compare CV count to manual count
-4. Calculate accuracy: `(CV_count / manual_count) × 100%`
-
-### Review Count Photos
-
-Each count saves a photo in `data/photos/`:
-```
-count_1_20260112_143215.jpg
-count_2_20260112_143218.jpg
-...
-```
-
-Review photos to verify:
-- Lines are correctly positioned
-- Pieces are being detected at right moment
-- No phantom counts from noise
-
-### Accuracy Targets
-
-| Metric | Target |
-|--------|--------|
-| Detection Rate | ≥98% (pieces counted / actual pieces) |
-| False Positive Rate | ≤2% (phantom counts / total counts) |
-| Travel Time Consistency | Within expected range |
-
-## Common Calibration Issues
-
-### Issue: Missed Counts
-
-**Symptoms:** CV count is lower than actual
-**Causes & Fixes:**
-1. **Threshold too high** → Lower `luminosity_threshold`
-2. **Lines too short** → Extend line endpoints
-3. **Pieces too fast** → Lower `min_consecutive_frames`
-4. **Sequence timeout too short** → Increase `sequence_timeout`
-
-### Issue: Double Counts
-
-**Symptoms:** CV count is higher than actual
-**Causes & Fixes:**
-1. **Lines too close together** → Space lines further apart
-2. **Timeout too long** → Decrease `sequence_timeout`
-3. **Pieces stopping between lines** → This is physical, not CV issue
-
-### Issue: Phantom Counts
-
-**Symptoms:** Counts when no piece is present
-**Causes & Fixes:**
-1. **Threshold too low** → Increase `luminosity_threshold`
-2. **Ambient light** → Increase `min_bright_pixels`
-3. **Reflections** → Reposition lines to avoid reflective surfaces
-4. **Sparks/debris** → Increase `min_consecutive_frames`
-
-### Issue: Inconsistent Detection
-
-**Symptoms:** Works sometimes, fails other times
-**Causes & Fixes:**
-1. **Lighting changes** → May need different thresholds for day/night
-2. **Camera position shift** → Re-calibrate lines
-3. **Stream quality** → Check network stability
-
-## Advanced: Dual Threshold Profiles
-
-If lighting varies significantly, consider using environment variable for threshold:
-
-```python
-# In code
-import os
-threshold = int(os.getenv('AIS_LUMINOSITY', '150'))
-```
+Use `--test` mode to print per-frame state to the console:
 
 ```bash
-# Day shift
-export AIS_LUMINOSITY=150
-python run_counter.py
-
-# Night shift (pieces glow brighter against dark background)
-export AIS_LUMINOSITY=180
-python run_counter.py
+python scripts/run_mill_counter.py --no-firebase --test
 ```
+
+Expected output when a piece passes Area 1:
+
+```
+14:32:15 | Area 1 | L1=ON  L2=off | PENDING  | joined=0  [A1:0  A2:0  A3:0]
+14:32:15 | Area 1 | L1=ON  L2=off | PENDING  | joined=0  [A1:0  A2:0  A3:0]
+14:32:16 | Area 1 | L1=ON  L2=ON  |          | joined=0  [A1:1  A2:0  A3:0]
+```
+
+If nothing prints, the lines are not being hit — recalibrate ROI and line positions.
+
+### CSV Brightness Logs
+
+Each area writes a per-frame CSV to `data/logs/line_brightness_areaN.csv`.
+Use it to find the actual brightness values your pieces produce:
+
+```bash
+# Sort by l1_bright_px descending to find peak brightness during a piece pass
+sort -t, -k2 -rn data/logs/line_brightness_area1.csv | head -20
+```
+
+**Absolute mode (`use_bg_subtraction: false`):**
+Set `--brightness-threshold` below the observed peak but above the ambient
+noise floor.
+
+**Background subtraction mode (`use_bg_subtraction: true`):**
+The logged `l1_bright_px` / `l2_bright_px` values reflect pixels above the
+EMA baseline (i.e. the delta count). Set `bg_delta` so that piece-pass values
+reliably exceed `min_line_pixels`, while idle frames stay below it.
+
+---
 
 ## Related Documentation
 
 - [Configuration Reference](CONFIGURATION.md)
 - [Architecture](ARCHITECTURE.md)
+- [Mill Stand Counter](MILL_STAND.md)
 - [Troubleshooting](TROUBLESHOOTING.md)

@@ -83,6 +83,7 @@
         // Load last 7 days of data
         const dailyQuery = query(
           collection(db, 'daily'),
+          where('camera', '==', 'CAM-2'),
           orderBy('date', 'desc'),
           limit(7)
         );
@@ -231,7 +232,6 @@
       <a href="history.html" class="text-gray-400 hover:text-white whitespace-nowrap">History</a>
       <a href="day.html" class="text-gray-400 hover:text-white whitespace-nowrap">Today</a>
       <a href="summary.html" class="text-blue-400 font-medium whitespace-nowrap">Summary</a>
-      <a href="review.html" class="text-gray-400 hover:text-white whitespace-nowrap">Review</a>
     </div>
   </nav>
 
@@ -344,7 +344,7 @@
   <!-- Footer -->
   <footer class="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 px-4 py-2">
     <div class="flex justify-between text-xs text-gray-500">
-      <span>CAM-1 Furnace</span>
+      <span>CAM-2 Mill Stand</span>
       <span>AIS v1.0</span>
     </div>
   </footer>

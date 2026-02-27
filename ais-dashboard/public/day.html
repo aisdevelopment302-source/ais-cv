@@ -291,7 +291,7 @@
     let cachedActiveSession = null;
 
     // Listen to daily summary (real-time)
-    const dailyUnsub = onSnapshot(doc(db, 'daily', dateStr), (docSnap) => {
+    const dailyUnsub = onSnapshot(doc(db, 'daily', `${dateStr}_cam2`), (docSnap) => {
       if (docSnap.exists()) {
         cachedDailyData = docSnap.data();
       } else {
@@ -302,10 +302,10 @@
       console.error('Daily listener error:', error);
     });
 
-    // Listen to live/furnace for active session (only for today)
+    // Listen to live/mill_stand for active session (only for today)
     let liveUnsub = null;
     if (isToday) {
-      liveUnsub = onSnapshot(doc(db, 'live', 'furnace'), (docSnap) => {
+      liveUnsub = onSnapshot(doc(db, 'live', 'mill_stand'), (docSnap) => {
         if (docSnap.exists()) {
           const liveData = docSnap.data();
           const currentSession = liveData.current_session;
@@ -412,7 +412,6 @@
       <a href="history.html" class="text-gray-400 hover:text-white whitespace-nowrap">History</a>
       <span id="dateNav" class="text-blue-400 font-medium whitespace-nowrap">Today</span>
       <a href="summary.html" class="text-gray-400 hover:text-white whitespace-nowrap">Summary</a>
-      <a href="review.html" class="text-gray-400 hover:text-white whitespace-nowrap">Review</a>
     </div>
   </nav>
 
@@ -471,7 +470,7 @@
   <!-- Footer -->
   <footer class="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 px-4 py-2">
     <div class="flex justify-between text-xs text-gray-500">
-      <span>CAM-1 Furnace</span>
+      <span>CAM-2 Mill Stand</span>
       <span>AIS v1.0</span>
     </div>
   </footer>

@@ -1,266 +1,359 @@
 # AIS-CV Architecture
 
-## Overview
+## System Overview
 
-AIS-CV is a computer vision system for monitoring production state in a rolling mill. It analyzes video feeds from RTSP cameras to:
-
-1. **Detect hot stock** using luminosity-based detection
-2. **Count plate pieces** crossing detection lines on the conveyor
-3. **Track RUN/BREAK sessions** for production analytics
-4. **Sync data to Firebase** for real-time dashboards
-
-## System Architecture
+AIS-CV counts hot steel pieces at the mill stand from a Dahua NVR using CAM-2 (channel 2, 3 areas) and CAM-3 (channel 3, 1 area), with Firebase sync for real-time dashboards and session analytics. All four areas count the same pieces from different angles for redundancy.
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                          AIS-CV System                                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│   ┌──────────────┐    ┌──────────────┐    ┌──────────────────────────┐ │
-│   │   Dahua NVR  │───▶│ RTSPStream   │───▶│     PlateCounter         │ │
-│   │  (RTSP Feed) │    │ (stream.py)  │    │     (counter.py)         │ │
-│   └──────────────┘    └──────────────┘    │  - Line detection        │ │
-│                                           │  - 3-line sequence       │ │
-│                                           │  - Consecutive frames    │ │
-│                                           └───────────┬──────────────┘ │
-│                                                       │                │
-│                                                       ▼                │
-│   ┌──────────────────────────────────────────────────────────────────┐ │
-│   │                    SessionManager                                 │ │
-│   │                   (session_manager.py)                           │ │
-│   │  - RUN/BREAK session tracking                                    │ │
-│   │  - Hourly/daily aggregates                                       │ │
-│   │  - Automatic midnight reset                                      │ │
-│   └───────────────────────────────┬──────────────────────────────────┘ │
-│                                   │                                    │
-│                                   ▼                                    │
-│   ┌──────────────────────────────────────────────────────────────────┐ │
-│   │                    FirebaseClient                                 │ │
-│   │                   (firebase_client.py)                           │ │
-│   │  - Push individual counts                                        │ │
-│   │  - Push completed sessions                                       │ │
-│   │  - Update live status                                            │ │
-│   │  - Daily/hourly aggregates                                       │ │
-│   └──────────────────────────────────────────────────────────────────┘ │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
+Dahua NVR (192.168.1.200)
+├── Channel 2 (CAM-2) ──▶ AreaDetectors 1-3 ──┐
+└── Channel 3 (CAM-3) ──▶ AreaDetector 4   ──┴──▶ CountReconciler ──▶ Firebase (live)
 ```
 
-## Core Components
+---
 
-### 1. RTSPStream (`src/stream.py`)
+## Counter — Mill Stand (CAM-2 + CAM-3)
 
-Handles camera video stream connection and frame capture.
-
-**Responsibilities:**
-- Connect to Dahua NVR via RTSP protocol
-- Handle reconnection on stream failure
-- Yield frames at target FPS for processing
-- Minimize buffer for real-time processing
-
-**Key Configuration:**
-- `rtsp_url`: RTSP stream URL with credentials
-- `reconnect_attempts`: Number of retry attempts (default: 5)
-- `reconnect_delay_seconds`: Wait between retries (default: 5s)
-
-### 2. PlateCounter (`src/counter.py`)
-
-The main detection engine for counting hot plate pieces.
-
-**Detection Logic:**
-1. Convert frame to grayscale
-2. Check 3 detection lines for bright pixels above threshold
-3. Track consecutive frames for each line (reduces false positives)
-4. When a piece crosses L1 → L2 → L3 in sequence, count it
-5. Calculate confidence based on frame counts and pixel consistency
-
-**Key Parameters:**
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `luminosity_threshold` | 150 | Brightness threshold (0-255) |
-| `min_bright_pixels` | 80 | Minimum bright pixels on line |
-| `sequence_timeout` | 4.0s | Max time for L1→L3 sequence |
-| `min_travel_time` | 0.2s | Min time for L1→L3 (filters noise) |
-| `min_consecutive_frames` | 2 | Frames to confirm detection |
-
-**Confidence Scoring:**
-```
-Base: 50% for completing L1→L2→L3 sequence
-+20%  if 3+ frames per line
-+15%  if consistent pixel counts across lines
-+15%  if high pixel counts (>200 avg)
-```
-
-### 3. SessionManager (`src/session_manager.py`)
-
-Tracks production sessions for analytics.
-
-**Session Types:**
-- **RUN**: Active production (pieces being counted)
-- **BREAK**: Idle period (no counts for `break_threshold` seconds)
-- **OFFLINE**: System not running
-
-**Features:**
-- Automatic RUN→BREAK transition after idle threshold
-- Immediate BREAK→RUN transition on piece counted
-- Hourly aggregation (run_minutes, break_minutes, count)
-- Daily totals tracking
-- Automatic midnight reset
-
-### 4. FirebaseClient (`src/firebase_client.py`)
-
-Syncs data to Firebase/Firestore for dashboards.
-
-**Collections:**
-| Collection | Purpose |
-|------------|---------|
-| `live/furnace` | Real-time dashboard status |
-| `counts/{id}` | Individual count events |
-| `daily/{date}` | Daily totals |
-| `hourly/{date}/hours/{HH}` | Hourly breakdown |
-| `sessions/{id}` | Completed RUN/BREAK sessions |
-
-### 5. HotStockDetector (`src/detector.py`)
-
-Original detection module for RUNNING/BREAK state based on luminosity + motion.
-
-**Detection Methods:**
-- **Luminosity**: Count bright pixels in ROI (hot steel glows)
-- **Motion**: Frame differencing for movement detection
-- **Combined**: Luminosity primary (70%), motion secondary (30%)
-
-*Note: This module is used for state detection, while PlateCounter handles piece counting.*
-
-### 6. ProductionStateMachine (`src/state_machine.py`)
-
-Manages RUNNING/BREAK state transitions.
-
-**State Transitions:**
-```
-UNKNOWN → RUNNING (hot stock detected)
-RUNNING → BREAK (no detection for break_threshold)
-BREAK → RUNNING (hot stock detected - immediate)
-ANY → UNKNOWN (camera failure, low confidence)
-```
-
-## Data Flow
-
-### Counting Flow
-```
-Frame → Grayscale → Check L1,L2,L3 → Track consecutive frames
-                                            ↓
-                              L1+L2+L3 confirmed?
-                                    ↓ YES
-                        Validate travel time (0.2-4s)
-                                    ↓ PASS
-                            Increment count
-                                    ↓
-              SessionManager.on_piece_counted()
-                                    ↓
-                FirebaseClient.push_count() + update_status()
-```
-
-### Session Flow
-```
-Piece counted → SessionManager.on_piece_counted()
-                         ↓
-              Currently BREAK? → Start RUN session → Push ended BREAK to Firebase
-                         ↓ NO
-              Update last_count_time, track run_minutes_since_last
-                         
-                         
-Periodic check → SessionManager.check_for_break()
-                         ↓
-              idle > break_threshold? → Start BREAK session → Push ended RUN to Firebase
-```
-
-## File Structure
+### Pipeline
 
 ```
-ais-cv/
-├── config/
-│   ├── settings.template.yaml    # Template (commit this)
-│   ├── settings.yaml             # Your config (DO NOT commit)
-│   └── firebase-service-account.json  # Firebase credentials
-├── src/
-│   ├── __init__.py
-│   ├── main.py                   # Production state detection entry
-│   ├── stream.py                 # RTSP stream handler
-│   ├── detector.py               # Hot stock detection (luminosity/motion)
-│   ├── state_machine.py          # RUNNING/BREAK state logic
-│   ├── counter.py                # Plate counting (3-line detection)
-│   ├── session_manager.py        # RUN/BREAK session tracking
-│   └── firebase_client.py        # Firestore integration
-├── scripts/
-│   ├── run_counter.py            # Main entry point for counter
-│   ├── calibrate_lines.py        # Interactive line calibration tool
-│   ├── calibrate_web.py          # Web-based calibration (alternative)
-│   ├── test_counter.py           # Counter testing utility
-│   ├── test_firebase.py          # Firebase connection test
-│   ├── live_test.py              # Live camera test
-│   ├── visualize_roi.py          # ROI visualization tool
-│   └── photo_server.py           # Photo serving API
-├── deploy/
-│   ├── ais-counter.service       # Systemd service for counter
-│   ├── ais-photo-api.service     # Systemd service for photo server
-│   └── install-service.sh        # Service installation script
-├── data/
-│   ├── logs/                     # Application logs
-│   │   ├── counter.log
-│   │   └── state_changes_YYYY-MM-DD.csv
-│   └── photos/                   # Captured count photos
-│       └── count_N_YYYYMMDD_HHMMSS.jpg
-├── tests/
-├── docs/                         # Documentation
-└── requirements.txt
+RTSP (channel 2) — shared across CAM-2 areas     RTSP (channel 3) — CAM-3 area
+       │                                                  │
+       ▼                                                  ▼
+  StreamManager                                    StreamManager
+  (one cv2.VideoCapture per unique RTSP URL)
+       │  frame (resized to 704×576)               │  frame (resized to 704×576)
+       ├──▶ AreaDetector 1 (CAM-2)                 └──▶ AreaDetector 4 (CAM-3)
+       │     ├── ROI mask: zero pixels outside roi rectangle                │
+       │     └── TwoLineDetector.update(masked_frame, l1, l2, t)            │
+       │         └── L1→L2 sequence within sequence_timeout → count_1++    │
+       │                                                                     │
+       ├──▶ AreaDetector 2 (CAM-2)  → count_2++                            │
+       └──▶ AreaDetector 3 (CAM-2)  → count_3++                            │ count_4++
+                                     │                                       │
+                            CountReconciler ◀──────────────────────────────┘
+                     joined = int(statistics.median([count_1, count_2, count_3, count_4]))
+                     diverged = max-min > divergence_warn_threshold
+                                     │
+                             joined increased?
+                                     │ YES
+                                SessionManager.on_piece_counted()
+                                     │
+                                FirebaseClient
+                                ├── push_mill_count()
+                                ├── create/update/end sessions/
+                                └── update live/mill_stand
 ```
 
-## Performance Considerations
+### Entry Point
 
-### Processing FPS
-- Stream runs at 25 FPS (NVR native)
-- Detection processes ~20 FPS (sleep 0.05s between frames)
-- Lower FPS = less CPU, but might miss fast-moving pieces
+`scripts/run_mill_counter.py` — runs continuously, deployed as `ais-mill-counter.service`.
 
-### Memory Usage
-- Single frame buffer (CAP_PROP_BUFFERSIZE=1)
-- No historical frames stored in memory
-- Photos saved to disk immediately
+### Key Design Decisions
 
-### Network
-- Sub-stream (704x576) recommended over main stream (1920x1080)
-- TCP transport for reliability
-- Reconnection handling built-in
+**ROI masking (not cropping):** Each `AreaDetector` zeroes pixels outside its ROI
+rectangle before passing the frame to `TwoLineDetector`. Line coordinates stay in
+full-frame space — no remapping is needed. This prevents a bright piece at one area's
+position from falsely triggering another area's lines.
 
-## Entry Points
+**`yaml_idx` field on `AreaConfig`:** The `counting_areas.areas[]` list is sorted by
+`order` at load time. To ensure `S` (save) always writes to the correct YAML slot,
+each `AreaConfig` stores `yaml_idx` — its original 0-based position in the YAML
+array before sorting. `save_area_positions(adet.cfg.yaml_idx, ...)` is called
+instead of the sorted list index.
 
-### Main Counter (`scripts/run_counter.py`)
-```bash
-python run_counter.py              # Run continuously
-python run_counter.py --duration 60  # Run for 60 seconds
-python run_counter.py --test       # Verbose test mode
-python run_counter.py --no-firebase  # Offline mode
+**Median reconciliation:** `CountReconciler` uses `statistics.median()` across all
+area counts after every detection. With 4 areas (3× CAM-2 + 1× CAM-3), a single
+runaway area (e.g. catching reflections, or CAM-3 lagging) cannot inflate the joined
+count beyond what the majority of areas agree on.
+
+**`joined_increased()`:** Firebase is only pushed when `joined_count >
+_last_joined`. This prevents duplicate pushes when the same piece triggers multiple
+areas in quick succession — the first trigger raises `joined_count` and pushes;
+subsequent triggers for the same piece leave `joined_count` unchanged.
+
+---
+
+## Source Modules
+
+### `scripts/run_mill_counter.py` — Self-Contained Mill Stand Counter
+
+All CAM-2 detection and counting logic lives directly in this script (no separate
+`src/` module). Key classes:
+
+**`TwoLineDetector`** — single-area 2-line detection:
+- Builds L1/L2 pixel masks once per unique line position; rebuilds on change
+- **Detection mode A (absolute):** counts pixels `> brightness_threshold` on each mask
+- **Detection mode B (background subtraction):** when `use_bg_subtraction=True`,
+  maintains a per-pixel float32 EMA baseline per line; triggers when
+  `sum(pixels > baseline + bg_delta) >= min_line_pixels`. Baseline updates only
+  while the line is **not** triggered (prevents steel from corrupting the model).
+  Baseline is re-seeded if its shape changes (line moved during calibration).
+- Dwell suppression: continuous trigger `> max_dwell_time` is suppressed
+- Consecutive-frame confirmation before committing a line as "on"
+- L1 → L2 sequence must complete within `sequence_timeout`
+- Per-frame CSV logging to `data/logs/line_brightness_areaN.csv`
+
+**`AreaConfig`** dataclass:
+```python
+name: str
+order: int                    # display/sort order
+camera_rtsp: str
+roi: ROI                      # masking rectangle (full-frame coords)
+l1: LineSeg                   # entry line
+l2: LineSeg                   # exit line
+yaml_idx: int                 # original position in counting_areas.areas[] (pre-sort)
+use_bg_subtraction: bool      # use EMA background subtraction instead of absolute threshold
+bg_delta: int                 # brightness above baseline required to trigger (default 30)
 ```
 
-### Production State Detection (`src/main.py`)
-```bash
-python src/main.py                 # Run with default config
-python src/main.py /path/to/config.yaml  # Custom config
+**`AreaDetector`** — wraps `TwoLineDetector` + `AreaConfig`:
+- `update(frame, timestamp)`: applies ROI mask then calls `det.update()`
+
+**`CountReconciler`**:
+```python
+counts: List[int]           # per-area running totals
+joined_count: int           # median of counts
+on_area_triggered(idx)      # → (joined_count, diverged)
+joined_increased()          # True once per upward move of joined_count
+reset()
+status_text()               # "joined=N  [A1:n  A2:n  A3:n]"
 ```
+
+**`StreamManager`** — one `cv2.VideoCapture` per unique RTSP URL; handles
+reconnection and frame buffering.
+
+**`ROI`** / **`LineSeg`** — draggable geometry objects with `handles()` /
+`move_handle()` / `draw()` methods used by the calibration UI.
+
+**`DragManager`** — mouse event handler for dragging `ROI` / `LineSeg` handles in
+display mode.
+
+---
+
+### `src/mill_stand_line_counter.py` — Legacy Voting Counter (CAM-2)
+
+Core detection logic for the older multi-view voting counter. Still used by
+`run_mill_stand_multi.py`. Not used by `run_mill_counter.py`.
+
+**`Stand`** — single view entry/exit line detector (emits `StandDetection`)
+**`VotingWindow`** — cross-view majority voting (emits `PieceCount`)
+
+---
+
+### `src/mill_stand_multi_view_counter.py` — `MultiViewLineCounter`, `ViewState`
+
+Orchestrates multiple RTSP views for the mill stand counter.
+
+**`ViewState`** — per-view state container:
+- Stores ROI box, original resolution, target resolution, `Stand` instance
+- Applies ROI crop before resize; scales line coordinates automatically
+- Initialized lazily on first frame
+
+**`MultiViewLineCounter`**:
+- Accepts `views_config` (list of view dicts from `settings.yaml`)
+- Manages one `ViewState` per view, one shared `VotingWindow` queue
+- `process_frames(frames)` → `(PieceCount | None, status_dict, resized_frames)`
+- `draw_combined_overlay(overlays, status)` → side-by-side annotated frame
+
+---
+
+### `src/mill_stand_counter.py` — `MillStandCounter`
+
+Zone-based bi-directional counter — used for offline video analysis and tuning. Not used in live RTSP deployment.
+
+- Two rotated rectangular zones: LEFT (exit/downstream) and RIGHT (entry/upstream)
+- Peak detection in each zone (pixel count exceeds threshold)
+- RIGHT peak → AWAITING_LEFT → LEFT peak within timeout = 1 piece counted
+- Supports both L→R and R→L directions
+
+---
+
+### `src/cooling_bed_counter.py` — `CoolingBedCounter`
+
+HSV blob-based detection for the cooling bed. Standalone, not integrated into the main pipeline.
+
+- White-hot metal filter: brightness > threshold AND saturation < threshold
+- Rising-edge count: counts when blob appears, not when it disappears
+- Used for a third camera position (channel 3 in NVR)
+
+---
+
+### `src/session_manager.py` — `SessionManager`, `Session`
+
+Tracks RUN/BREAK production sessions for both counters.
+
+**Session types:**
+- `RUN` — mill is actively producing (pieces being counted)
+- `BREAK` — mill is idle (no pieces for `break_threshold_seconds`, default 300s)
+
+**Key methods:**
+```python
+on_piece_counted(travel_time)  → dict   # Notify of new piece; handles RUN start
+check_for_break()              → dict   # Call periodically; triggers BREAK if idle
+check_daily_reset()            → bool   # True at midnight; resets daily state
+restore_session(last_session)  → bool   # Crash recovery from Firebase
+shutdown()                     → Session  # Gracefully end active session
+get_daily_totals()             → dict   # run_minutes, break_minutes, counts
+```
+
+**Return dicts** from `on_piece_counted` and `check_for_break` contain:
+- `session_to_end` — Session to finalize in Firebase (or `None`)
+- `session_to_create` — New Session to write to Firebase (or `None`)
+- `session_to_update` — Existing RUN Session with updated count (or `None`)
+- `run_minutes_since_last` — Minutes of run time to credit to this count
+
+---
+
+### `src/firebase_client.py` — `FirebaseClient`
+
+All Firestore read/write operations. Singleton via `get_firebase_client()`.
+
+| Method | Firestore writes |
+|--------|-----------------|
+| `create_session(session)` | `sessions/{id}` |
+| `update_session(session)` | `sessions/{id}.count` |
+| `push_mill_count(count_data, session_info)` | `daily/` (camera='CAM-2'), `hourly/`, `live/mill_stand` |
+| `update_mill_status(status, session_info)` | `live/mill_stand` |
+| `get_mill_today_count()` | read `daily/{today}_cam2.count` |
+| `end_mill_session(session)` | `sessions/{id}` end fields + `hourly/` + `daily/` |
+| `get_last_session()` | read most recent `sessions/` doc |
+
+*Note: mill stand counter does **not** write piece-level documents to `counts/`. Only session analytics and daily/hourly aggregates are pushed to Firestore.*
+
+---
+
+### `src/detector.py` — `HotStockDetector` (legacy)
+
+Original luminosity + motion detector for RUNNING/BREAK state. Superseded by `SessionManager` for all production use. Kept for reference.
+
+### `src/state_machine.py` — `ProductionStateMachine` (legacy)
+
+Original RUNNING/BREAK/UNKNOWN state machine. Superseded by `SessionManager`. Kept for reference.
+
+---
+
+## Scripts Reference
+
+### Production Scripts
+
+| Script | Camera | Firebase | Purpose |
+|--------|--------|----------|---------|
+| `run_mill_counter.py` | CAM-2 | Yes | Mill stand counter — production entry point |
+| `run_mill_stand_multi.py` | CAM-2 | No | Legacy multi-view voting counter (no Firebase) |
+
+### Calibration Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `calibrate_mill_stand_master.py` | Interactive ROI + line calibrator for CAM-2 multi-view |
+| `calibrate_mill_stand.py` | Zone calibrator for offline zone-based analysis |
+| `run_mill_stand_compare_cam2.py` | Side-by-side Peak vs 2-Line comparison on CAM-2 with mouse drag UI |
+
+### Utility Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `test_firebase.py` | Verify Firebase connection and read today's count |
+| `photo_server.py` | HTTP API to serve count photos for dashboard viewing |
+
+---
+
+## Data Flow — Session Lifecycle
+
+```
+System start
+    │
+    ▼
+restore_session() ── Firebase ──▶ last session end=null? → continue as RUN
+    │                               else → start fresh
+    ▼
+Piece counted
+    │
+    ├── Currently BREAK/NONE?
+    │       └── Create new RUN session in Firebase
+    │           End previous BREAK session
+    │
+    └── Update RUN session count in Firebase
+        Track run_minutes_since_last
+
+No piece for break_threshold (300s)
+    │
+    ├── End current RUN session in Firebase
+    └── Create new BREAK session in Firebase
+
+Midnight
+    │
+    └── counter.total_count = 0
+
+System shutdown
+    └── end_mill_session() for active session in Firebase
+        update_mill_status('OFFLINE')
+```
+
+---
+
+## Firestore Schema Summary
+
+```
+live/
+└── mill_stand       ← CAM-2 real-time status
+
+daily/{YYYY-MM-DD_cam2}   ← CAM-2 daily totals
+
+hourly/{YYYY-MM-DD_cam2}/hours/{HH}  ← hourly breakdown
+
+sessions/{id}        ← RUN/BREAK sessions (camera: 'CAM-2')
+```
+
+---
+
+## Configuration File
+
+`config/settings.yaml` — single YAML file for all settings. Sections:
+
+| Section | Used by |
+|---------|---------|
+| `counting` | `PlateCounter` thresholds (legacy reference) |
+| `detection` | `break_threshold_seconds` used by `SessionManager` |
+| `counting_areas` | `run_mill_counter.py` — area configs for CAM-2 (3 areas, channel 2) and CAM-3 (1 area, channel 3): ROI, L1, L2, divergence threshold, `use_bg_subtraction`, `bg_delta` |
+| `mill_stand` | `MillStandCounter` zone coordinates (offline use) |
+| `mill_stand_lines` | `MultiViewLineCounter` — legacy views, ROIs, lines, voting config |
+
+See [Configuration Guide](CONFIGURATION.md) for the complete reference.
+
+---
+
+## Performance
+
+| Counter | Resolution | FPS | CPU (Pi 5) |
+|---------|-----------|-----|-----------|
+| CAM-1 furnace | 704×576 sub-stream | ~20 FPS | Low |
+| CAM-2 mill (3 views) | 704×576 per view | ~20 FPS | Moderate |
+
+- Use sub-stream (`subtype=1`) — sufficient quality, lower bandwidth
+- `CAP_PROP_BUFFERSIZE=1` minimizes latency
+- No frame history kept in memory; photos written to disk immediately
+
+---
 
 ## Dependencies
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| opencv-python-headless | >=4.8.0 | Video processing |
-| numpy | >=1.24.0 | Array operations |
-| pyyaml | >=6.0 | Configuration files |
-| firebase-admin | >=6.0.0 | Firestore integration |
+| Package | Purpose |
+|---------|---------|
+| `opencv-python-headless` | Video capture, image processing |
+| `numpy` | Array operations, line mask generation |
+| `pyyaml` | Configuration file parsing |
+| `firebase-admin` | Firestore read/write via service account |
+| `zoneinfo` (stdlib) | Asia/Kolkata timezone (IST) |
+
+---
 
 ## Related Documentation
 
-- [Configuration Guide](CONFIGURATION.md)
-- [Calibration Guide](CALIBRATION.md)
-- [Deployment Guide](DEPLOYMENT.md)
+- [Configuration](CONFIGURATION.md)
+- [Calibration](CALIBRATION.md)
+- [Mill Stand Counter](MILL_STAND.md)
 - [Firebase Integration](FIREBASE.md)
+- [Deployment](DEPLOYMENT.md)
 - [Troubleshooting](TROUBLESHOOTING.md)

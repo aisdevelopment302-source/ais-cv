@@ -19,6 +19,10 @@
       {
         "source": "/day",
         "destination": "/day.html"
+      },
+      {
+        "source": "/summary",
+        "destination": "/summary.html"
       }
     ]
   }

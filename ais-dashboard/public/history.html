@@ -7,7 +7,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-    import { getFirestore, collection, query, orderBy, limit, getDocs } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+    import { getFirestore, collection, query, where, orderBy, limit, getDocs } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
     const firebaseConfig = {
       apiKey: "AIzaSyCBXxSsvjnFzGMMFbHCYouokIQydObeElo",
@@ -51,6 +51,7 @@
       try {
         const dailyQuery = query(
           collection(db, 'daily'),
+          where('camera', '==', 'CAM-2'),
           orderBy('date', 'desc'),
           limit(30)
         );
@@ -130,7 +131,6 @@
       <a href="history.html" class="text-blue-400 font-medium whitespace-nowrap">History</a>
       <a href="day.html" class="text-gray-400 hover:text-white whitespace-nowrap">Today</a>
       <a href="summary.html" class="text-gray-400 hover:text-white whitespace-nowrap">Summary</a>
-      <a href="review.html" class="text-gray-400 hover:text-white whitespace-nowrap">Review</a>
     </div>
   </nav>
 
@@ -155,7 +155,7 @@
   <!-- Footer -->
   <footer class="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 px-4 py-2">
     <div class="flex justify-between text-xs text-gray-500">
-      <span>CAM-1 Furnace</span>
+      <span>CAM-2 Mill Stand</span>
       <span>AIS v1.0</span>
     </div>
   </footer>

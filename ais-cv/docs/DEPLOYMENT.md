@@ -1,30 +1,23 @@
-# AIS-CV Deployment Guide
+# Deployment Guide
 
-## Overview
+AIS-CV runs as a systemd service on a Linux server or Raspberry Pi 5.
 
-This guide covers deploying AIS-CV as a systemd service on Raspberry Pi or Linux servers.
+| Service | Script | Camera | Status |
+|---------|--------|--------|--------|
+| `ais-mill-counter` | `scripts/run_mill_counter.py` | CAM-2 (mill stand) | Deployed |
 
-## Prerequisites
-
-- Raspberry Pi 5 (or Linux server)
-- Python 3.11+
-- Network access to Dahua NVR
-- Git (for deployment)
+---
 
 ## Initial Setup
 
-### 1. Clone or Copy Project
+### 1. Clone / Copy Project
 
 ```bash
-# Option A: Clone from git
 cd /home/adityajain/AIS
-git clone <repository-url> ais-cv
-
-# Option B: Copy existing
-# Already at /home/adityajain/AIS/ais-cv
+# Already present at ais-cv/
 ```
 
-### 2. Create Virtual Environment
+### 2. Virtual Environment
 
 ```bash
 cd /home/adityajain/AIS/ais-cv
@@ -33,25 +26,20 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Configure Application
+### 3. Configure
 
 ```bash
-# Copy template
 cp config/settings.template.yaml config/settings.yaml
-
-# Edit with your values
 nano config/settings.yaml
 ```
 
-Key configuration:
-- `camera.rtsp_url` - Your NVR credentials and IP
-- `counting_lines` - Calibrated line positions
-- `counting` - Detection thresholds
+Key values to set:
+- `mill_stand_lines.views[*].camera.rtsp_url` — NVR channel 2 URL (CAM-2)
 
-### 4. Configure Firebase (Optional)
+### 4. Firebase Credentials
 
 ```bash
-# Place your service account JSON in:
+# Place your service account JSON at:
 config/firebase-service-account.json
 
 # Test connection
@@ -64,113 +52,71 @@ python scripts/test_firebase.py
 mkdir -p data/logs data/photos
 ```
 
-### 6. Test Before Service Installation
+### 6. Test Before Installing Services
 
 ```bash
-# Quick test (30 seconds)
-python scripts/run_counter.py --duration 30
+# CAM-2 mill counter (30 second test)
+python scripts/run_mill_counter.py --duration 30 --test
 
-# Verify output
-cat data/logs/counter.log
-ls data/photos/
+# Review logs
+tail data/logs/mill_counter.log
 ```
 
-## Systemd Service Setup
+---
 
-### Counter Service
+## Service: `ais-mill-counter` (CAM-2 Mill Stand)
 
-The main service that runs continuously.
+### Service File
 
-**Service File:** `deploy/ais-counter.service`
+`deploy/ais-mill-counter.service`:
 
 ```ini
 [Unit]
-Description=AIS CV Plate Counter
-After=network.target
+Description=AIS Mill Stand Counter Service
+After=network.target network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=adityajain
+Group=adityajain
 WorkingDirectory=/home/adityajain/AIS/ais-cv
-ExecStart=/home/adityajain/AIS/ais-cv/venv/bin/python /home/adityajain/AIS/ais-cv/scripts/run_counter.py
+Environment=PATH=/home/adityajain/AIS/ais-cv/venv/bin:/usr/bin:/bin
+ExecStart=/home/adityajain/AIS/ais-cv/venv/bin/python scripts/run_mill_counter.py
 Restart=always
 RestartSec=10
-StandardOutput=append:/home/adityajain/AIS/ais-cv/data/logs/counter.log
-StandardError=append:/home/adityajain/AIS/ais-cv/data/logs/counter-error.log
-
-# Environment
-Environment=PYTHONUNBUFFERED=1
+StandardOutput=append:/home/adityajain/AIS/ais-cv/data/logs/mill_counter.log
+StandardError=append:/home/adityajain/AIS/ais-cv/data/logs/mill_counter-error.log
+TimeoutStartSec=60
+WatchdogSec=300
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-### Install Service
+### Install
 
-**Automated Installation:**
 ```bash
-cd /home/adityajain/AIS/ais-cv/deploy
-sudo bash install-service.sh
-```
-
-**Manual Installation:**
-```bash
-# Copy service file
-sudo cp deploy/ais-counter.service /etc/systemd/system/
-
-# Reload systemd
+sudo cp deploy/ais-mill-counter.service /etc/systemd/system/
 sudo systemctl daemon-reload
-
-# Enable auto-start on boot
-sudo systemctl enable ais-counter
-
-# Start service
-sudo systemctl start ais-counter
+sudo systemctl enable ais-mill-counter
+sudo systemctl start ais-mill-counter
 ```
 
-### Service Management Commands
+### Manage
 
 ```bash
-# Check status
-sudo systemctl status ais-counter
-
-# View logs
-sudo journalctl -u ais-counter -f
-
-# Stop service
-sudo systemctl stop ais-counter
-
-# Restart service
-sudo systemctl restart ais-counter
-
-# Disable auto-start
-sudo systemctl disable ais-counter
+sudo systemctl status ais-mill-counter
+sudo systemctl restart ais-mill-counter
+sudo journalctl -u ais-mill-counter -f
 ```
 
-## Photo API Service (Optional)
+---
 
-Serves count photos via HTTP for dashboard viewing.
+## Service: `ais-photo-api` (Optional)
 
-**Service File:** `deploy/ais-photo-api.service`
+Serves captured count photos via HTTP for dashboard viewing.
 
-```ini
-[Unit]
-Description=AIS CV Photo API Server
-After=network.target
-
-[Service]
-Type=simple
-User=adityajain
-WorkingDirectory=/home/adityajain/AIS/ais-cv
-ExecStart=/home/adityajain/AIS/ais-cv/venv/bin/python /home/adityajain/AIS/ais-cv/scripts/photo_server.py
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Install:
 ```bash
 sudo cp deploy/ais-photo-api.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -178,97 +124,65 @@ sudo systemctl enable ais-photo-api
 sudo systemctl start ais-photo-api
 ```
 
-## Monitoring
+---
 
-### Log Locations
+## Log Locations
 
-| Log | Location | Content |
+| Log | Location | Service |
 |-----|----------|---------|
-| Application | `data/logs/counter.log` | Normal operation logs |
-| Errors | `data/logs/counter-error.log` | Python errors, crashes |
-| State Changes | `data/logs/state_changes_YYYY-MM-DD.csv` | RUN/BREAK transitions |
-| Systemd Journal | `journalctl -u ais-counter` | Service-level logs |
-
-### View Logs
+| Mill counter | `data/logs/mill_counter.log` | `ais-mill-counter` |
+| Mill errors | `data/logs/mill_counter-error.log` | `ais-mill-counter` |
+| Systemd journal | `journalctl -u <service>` | — |
 
 ```bash
-# Live application logs
-tail -f data/logs/counter.log
-
-# Today's state changes
-cat data/logs/state_changes_$(date +%Y-%m-%d).csv
+# Live logs
+tail -f data/logs/mill_counter.log
 
 # Service journal
-sudo journalctl -u ais-counter -f --no-pager
+sudo journalctl -u ais-mill-counter -f --no-pager
 
 # Last 100 lines
-sudo journalctl -u ais-counter -n 100
+sudo journalctl -u ais-mill-counter -n 100
 ```
 
-### Health Checks
-
-```bash
-# Check service is running
-systemctl is-active ais-counter
-
-# Check recent activity (last 5 minutes)
-find data/logs/counter.log -mmin -5 -print
-
-# Check recent photos
-ls -lt data/photos/ | head -5
-
-# Check Firebase sync (if enabled)
-python -c "
-from src.firebase_client import get_firebase_client
-fb = get_firebase_client()
-if fb.initialize():
-    print(f\"Today's count: {fb.get_today_count()}\")
-"
-```
+---
 
 ## Auto-Recovery
 
-The systemd service is configured to auto-restart on failure:
+The service uses `Restart=always` with `RestartSec=10`. Recovery behaviour:
 
-```ini
-Restart=always
-RestartSec=10
+| Failure | Recovery |
+|---------|----------|
+| Python crash | systemd restarts process after 10s |
+| Firebase timeout | Firebase writes are non-blocking; counter continues offline |
+| System reboot | Service starts automatically (enabled with `systemctl enable`) |
+
+**Session crash recovery:** On startup, the counter reads the last Firebase session. If it has no end time, counting continues in the same session.
+
+---
+
+## Health Checks
+
+```bash
+# Is service active?
+systemctl is-active ais-mill-counter
+
+# Recent activity (log modified in last 5 minutes?)
+find data/logs/mill_counter.log -mmin -5 -print
+
+# Recent photos
+ls -lt data/photos/ | head -10
 ```
 
-This means:
-- If the Python process crashes, it restarts after 10 seconds
-- If camera disconnects, the app's reconnection logic handles it
-- If both fail, systemd restarts the whole process
+---
 
-### Failure Notification (Advanced)
-
-To receive notifications on failure, add to service file:
-
-```ini
-[Unit]
-# ... existing ...
-OnFailure=notify-admin@%n.service
-```
-
-Then create `/etc/systemd/system/notify-admin@.service`:
-```ini
-[Unit]
-Description=Send failure notification
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/curl -X POST https://your-webhook.com/alert -d "Service %i failed"
-```
-
-## Updates
-
-### Updating Code
+## Updating Code
 
 ```bash
 # Stop service
-sudo systemctl stop ais-counter
+sudo systemctl stop ais-mill-counter
 
-# Pull updates (if using git)
+# Pull updates
 cd /home/adityajain/AIS/ais-cv
 git pull
 
@@ -277,123 +191,81 @@ source venv/bin/activate
 pip install -r requirements.txt
 
 # Restart service
-sudo systemctl start ais-counter
+sudo systemctl start ais-mill-counter
 ```
 
-### Updating Configuration
+---
+
+## Updating Configuration
+
+Config changes take effect on restart. The service can stay running during file edits:
 
 ```bash
-# Edit config (service can stay running during edit)
 nano config/settings.yaml
-
-# Restart to apply changes
-sudo systemctl restart ais-counter
+sudo systemctl restart ais-mill-counter
 ```
+
+---
 
 ## Backup
 
-### What to Backup
-
-| Item | Location | Frequency |
-|------|----------|-----------|
-| Configuration | `config/settings.yaml` | On change |
-| Firebase Credentials | `config/firebase-service-account.json` | One-time |
-| Photos | `data/photos/` | Daily (optional) |
-| Logs | `data/logs/` | Weekly rotation |
-
-### Backup Script
+| Item | Location | Notes |
+|------|----------|-------|
+| Config | `config/settings.yaml` | Back up on change |
+| Firebase credentials | `config/firebase-service-account.json` | One-time, store securely |
+| Count photos | `data/photos/` | Optional — also accessible via photo API |
+| Application logs | `data/logs/` | Rotate weekly |
 
 ```bash
-#!/bin/bash
-# backup-ais-cv.sh
-
-BACKUP_DIR="/home/adityajain/backups/ais-cv"
+# Example backup script
 DATE=$(date +%Y%m%d)
+BACKUP=/home/adityajain/backups/ais-cv/$DATE
+mkdir -p $BACKUP
 
-mkdir -p "$BACKUP_DIR"
-
-# Backup config (excluding credentials)
-cp config/settings.yaml "$BACKUP_DIR/settings_$DATE.yaml"
-
-# Backup recent photos (last 7 days)
-find data/photos -mtime -7 -type f -exec cp {} "$BACKUP_DIR/photos/" \;
-
-# Backup logs
-cp data/logs/*.csv "$BACKUP_DIR/logs/"
-
-echo "Backup complete: $BACKUP_DIR"
+cp config/settings.yaml $BACKUP/
+find data/photos -mtime -7 -type f -exec cp {} $BACKUP/ \;
+cp data/logs/*.log $BACKUP/ 2>/dev/null
+echo "Backup complete: $BACKUP"
 ```
 
-## Performance Tuning
+---
 
-### Raspberry Pi 5 Optimization
+## Performance Tuning (Raspberry Pi 5)
 
 ```bash
-# Increase GPU memory (if using video decoding)
-sudo raspi-config
-# → Performance Options → GPU Memory → 256
+# Set CPU governor to performance
+echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
 
-# Disable unnecessary services
+# Disable unused services
 sudo systemctl disable bluetooth
 sudo systemctl disable avahi-daemon
 
-# Set CPU governor to performance
-echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor
+# Add swap if needed
+sudo dphys-swapfile install
 ```
 
-### Memory Management
-
-If running low on memory:
+**Memory management:**
 ```bash
-# Check memory usage
-free -h
-
-# Reduce photo retention
-find data/photos -mtime +7 -delete  # Delete photos older than 7 days
-
-# Add to crontab for automatic cleanup
+# Auto-delete photos older than 7 days
 crontab -e
 # Add: 0 0 * * * find /home/adityajain/AIS/ais-cv/data/photos -mtime +7 -delete
 ```
 
-## Security Considerations
+---
 
-### File Permissions
+## Security
 
 ```bash
-# Restrict config access
+# Restrict credentials
 chmod 600 config/settings.yaml
 chmod 600 config/firebase-service-account.json
+chown adityajain:adityajain config/
 
-# Ensure service user can read
-chown adityajain:adityajain config/*
+# Verify NVR is on isolated network segment
+# Firebase credentials grant full database write access — protect them
 ```
 
-### Network Security
-
-- NVR should be on isolated network segment
-- Firebase credentials grant write access - protect them
-- Consider firewall rules if Pi is exposed
-
-## Troubleshooting
-
-See [Troubleshooting Guide](TROUBLESHOOTING.md) for common issues.
-
-### Quick Diagnostics
-
-```bash
-# Is service running?
-systemctl is-active ais-counter
-
-# Recent errors?
-sudo journalctl -u ais-counter --since "10 minutes ago" | grep -i error
-
-# Camera accessible?
-ffprobe -rtsp_transport tcp "rtsp://admin:pass@192.168.1.100:554/cam/realmonitor?channel=1&subtype=1" 2>&1 | head -5
-
-# Firebase connected?
-python scripts/test_firebase.py
-```
+---
 
 ## Related Documentation
 

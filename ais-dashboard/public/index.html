@@ -7,54 +7,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script type="module">
     import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-    import { getFirestore, doc, onSnapshot, collection, query, orderBy, limit } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
-
-    // Photo API on Raspberry Pi (local network only)
-    const PHOTO_API = 'http://192.168.1.23:5001';
-
-    // Photo functions - exposed to global scope for onclick handlers
-    window.refreshPhoto = function() {
-      const img = document.getElementById('latestPhoto');
-      const loading = document.getElementById('photoLoading');
-      const error = document.getElementById('photoError');
-      
-      loading.innerHTML = '<p class="animate-pulse">Loading...</p>';
-      loading.classList.remove('hidden');
-      error.classList.add('hidden');
-      img.classList.add('hidden');
-      
-      // Add timestamp to bypass cache
-      const timestamp = new Date().getTime();
-      img.src = `${PHOTO_API}/api/photos/latest?t=${timestamp}`;
-      
-      img.onload = function() {
-        img.classList.remove('hidden');
-        loading.classList.add('hidden');
-        error.classList.add('hidden');
-      };
-      
-      img.onerror = function() {
-        console.error('Photo fetch error');
-        loading.classList.add('hidden');
-        error.classList.remove('hidden');
-        img.classList.add('hidden');
-      };
-    };
-
-    window.togglePhotoFullscreen = function() {
-      const img = document.getElementById('latestPhoto');
-      if (!img.src) return;
-      
-      if (img.classList.contains('fixed')) {
-        // Exit fullscreen
-        img.classList.remove('fixed', 'inset-0', 'z-50', 'object-contain', 'bg-black', 'p-4');
-        img.classList.add('w-full', 'rounded-lg');
-      } else {
-        // Enter fullscreen
-        img.classList.add('fixed', 'inset-0', 'z-50', 'object-contain', 'bg-black', 'p-4');
-        img.classList.remove('w-full', 'rounded-lg');
-      }
-    };
+    import { getFirestore, doc, onSnapshot } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
     const firebaseConfig = {
       apiKey: "AIzaSyCBXxSsvjnFzGMMFbHCYouokIQydObeElo",
@@ -209,7 +162,6 @@
     const statusDisplay = document.getElementById('statusValue');
     const runTimeDisplay = document.getElementById('runTime');
     const breakTimeDisplay = document.getElementById('breakTime');
-    const recentList = document.getElementById('recentList');
     const connectionStatus = document.getElementById('connectionStatus');
     const todayLink = document.getElementById('todayLink');
     const segmentTimerDisplay = document.getElementById('segmentTimer');
@@ -268,7 +220,7 @@
     }
 
     // Listen to live data
-    onSnapshot(doc(db, 'live', 'furnace'), (doc) => {
+    onSnapshot(doc(db, 'live', 'mill_stand'), (doc) => {
       if (doc.exists()) {
         const data = doc.data();
         
@@ -294,8 +246,8 @@
         }
         
         // Update last travel time
-        lastTravelDisplay.textContent = data.last_travel_time ? 
-          data.last_travel_time.toFixed(1) + 's' : '--';
+        lastTravelDisplay.textContent = data.last_avg_travel_time ? 
+          data.last_avg_travel_time.toFixed(1) + 's' : '--';
         
         // Update last count time
         if (data.last_count) {
@@ -346,42 +298,12 @@
     });
 
     // Listen to today's daily stats
-    onSnapshot(doc(db, 'daily', today), (doc) => {
+    onSnapshot(doc(db, 'daily', `${today}_cam2`), (doc) => {
       if (doc.exists()) {
         const data = doc.data();
         runTimeDisplay.textContent = formatDuration(data.total_run_minutes || 0);
         breakTimeDisplay.textContent = formatDuration(data.total_break_minutes || 0);
       }
-    });
-
-    // Listen to recent counts
-    const countsQuery = query(
-      collection(db, 'counts'),
-      orderBy('timestamp', 'desc'),
-      limit(5)
-    );
-
-    onSnapshot(countsQuery, (snapshot) => {
-      recentList.innerHTML = '';
-      
-      if (snapshot.empty) {
-        recentList.innerHTML = '<div class="text-gray-500 text-center py-4">No counts yet today</div>';
-        return;
-      }
-      
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        const time = data.timestamp?.toDate()?.toLocaleTimeString() || '--:--:--';
-        const travel = data.travel_time ? data.travel_time.toFixed(1) + 's' : '--';
-        
-        const div = document.createElement('div');
-        div.className = 'flex justify-between items-center py-2 border-b border-gray-700 last:border-0';
-        div.innerHTML = `
-          <span class="text-gray-300">${time}</span>
-          <span class="text-gray-500 text-sm">Travel: ${travel}</span>
-        `;
-        recentList.appendChild(div);
-      });
     });
   </script>
 </head>
@@ -394,7 +316,6 @@
         <a href="history.html" class="text-gray-400 hover:text-white whitespace-nowrap">History</a>
         <a id="todayLink" href="day.html" class="text-gray-400 hover:text-white whitespace-nowrap">Today</a>
         <a href="summary.html" class="text-gray-400 hover:text-white whitespace-nowrap">Summary</a>
-        <a href="review.html" class="text-gray-400 hover:text-white whitespace-nowrap">Review</a>
       </div>
       <div class="flex items-center gap-2">
         <div id="statusDot" class="w-3 h-3 rounded-full bg-red-500"></div>
@@ -408,7 +329,7 @@
     <div class="flex items-center justify-between">
       <div>
         <h1 class="text-xl font-bold">AIS Production</h1>
-        <p class="text-sm text-gray-400">Furnace Camera - Plate Scrap Counter</p>
+        <p class="text-sm text-gray-400">Mill Stand Counter (CAM-2)</p>
       </div>
       <button 
         id="notifBtn" 
@@ -463,37 +384,7 @@
       </div>
     </div>
 
-    <!-- Latest Photo -->
-    <div class="bg-gray-800 rounded-xl p-4 mb-4">
-      <div class="flex justify-between items-center mb-3">
-        <h2 class="text-gray-400 text-xs uppercase">Last Count Photo</h2>
-        <button onclick="refreshPhoto()" class="text-blue-400 text-xs hover:text-blue-300">Refresh</button>
-      </div>
-      <div id="photoContainer" class="relative">
-        <img id="latestPhoto" 
-             src="" 
-             alt="Latest count" 
-             class="w-full rounded-lg hidden cursor-pointer"
-             onclick="togglePhotoFullscreen()"
-        />
-        <div id="photoLoading" class="text-gray-500 text-center py-8">
-          <p>📷 Tap to load photo</p>
-          <button onclick="refreshPhoto()" class="mt-2 px-4 py-2 bg-blue-600 rounded-lg text-sm">Load Photo</button>
-        </div>
-        <div id="photoError" class="text-gray-500 text-center py-4 hidden">
-          <p>Photo unavailable</p>
-          <p class="text-xs mt-1">Connect to local network to view</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- Recent Counts -->
-    <div class="bg-gray-800 rounded-xl p-4">
-      <h2 class="text-gray-400 text-xs uppercase mb-3">Recent Counts</h2>
-      <div id="recentList">
-        <div class="text-gray-500 text-center py-4">Loading...</div>
-      </div>
-    </div>
+    <!-- Latest Photo and Recent Counts panels removed (CAM-2 does not write to counts/) -->
 
     <!-- Connection Error -->
     <div id="connectionStatus" class="mt-4 bg-red-900/50 border border-red-600 rounded-lg p-3 text-center hidden">
@@ -504,7 +395,7 @@
   <!-- Footer -->
   <footer class="fixed bottom-0 left-0 right-0 bg-gray-800 border-t border-gray-700 px-4 py-2">
     <div class="flex justify-between text-xs text-gray-500">
-      <span>CAM-1 Furnace</span>
+      <span>CAM-2 Mill Stand</span>
       <span>AIS v1.0</span>
     </div>
   </footer>

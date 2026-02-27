@@ -1,175 +1,27 @@
-# AIS-CV Firebase Integration
+# Firebase Integration
 
-## Overview
+AIS-CV syncs production analytics to Firebase Firestore for real-time dashboards and historical reporting.
 
-AIS-CV syncs production data to Firebase Firestore for real-time dashboards and historical analytics.
-
-## Firestore Schema
-
-### Collections Overview
-
-```
-Firestore Database
-├── live/
-│   └── furnace          # Real-time dashboard data
-├── counts/
-│   └── {auto-id}        # Individual count events
-├── daily/
-│   └── {YYYY-MM-DD}     # Daily aggregates
-├── hourly/
-│   └── {YYYY-MM-DD}/
-│       └── hours/
-│           └── {HH}     # Hourly breakdown
-└── sessions/
-    └── {auto-id}        # Completed RUN/BREAK sessions
-```
-
-### Document Schemas
-
-#### `live/furnace` - Real-time Dashboard
-
-```typescript
-{
-  today_count: number,        // Current day's piece count
-  status: 'RUNNING' | 'BREAK' | 'OFFLINE',
-  last_count: Timestamp,      // When last piece was counted
-  last_travel_time: number,   // Travel time of last piece (seconds)
-  date: string,               // Current date (YYYY-MM-DD)
-  status_updated: Timestamp,  // Last status update time
-  current_session: {          // Active session info
-    type: 'RUN' | 'BREAK',
-    start: Timestamp,
-    duration_minutes: number
-  }
-}
-```
-
-#### `counts/{auto-id}` - Individual Count Events
-
-```typescript
-{
-  timestamp: Timestamp,
-  travel_time: number,        // Seconds from L1 to L3
-  confidence: number,         // 0-100 confidence score
-  line_pixels: {
-    L1: number,
-    L2: number,
-    L3: number
-  },
-  line_frames: {
-    L1: number,
-    L2: number,
-    L3: number
-  },
-  line_brightness: {
-    L1: number,
-    L2: number,
-    L3: number
-  },
-  camera: string,             // 'CAM-1'
-  date: string,               // 'YYYY-MM-DD'
-  hour: string,               // 'HH'
-  photo_filename: string,     // Filename of captured photo
-  flagged: boolean,           // Auto-flagged for review (confidence < 70)
-  reviewed: boolean           // Has been manually reviewed
-}
-```
-
-#### `daily/{YYYY-MM-DD}` - Daily Aggregates
-
-```typescript
-{
-  count: number,              // Total pieces counted
-  first_count: Timestamp,     // First count of the day
-  last_count: Timestamp,      // Most recent count
-  total_run_minutes: number,  // Total production time
-  total_break_minutes: number,// Total idle time
-  date: string,               // 'YYYY-MM-DD'
-  camera: string              // 'CAM-1'
-}
-```
-
-#### `hourly/{YYYY-MM-DD}/hours/{HH}` - Hourly Breakdown
-
-```typescript
-{
-  count: number,              // Pieces this hour
-  run_minutes: number,        // Production time this hour
-  break_minutes: number       // Idle time this hour
-}
-```
-
-#### `sessions/{auto-id}` - Completed Sessions
-
-```typescript
-{
-  type: 'RUN' | 'BREAK',
-  start: Timestamp,
-  end: Timestamp,
-  date: string,               // 'YYYY-MM-DD'
-  hour: string,               // Hour when session started
-  duration_minutes: number,
-  count: number               // Pieces during RUN sessions
-}
-```
+---
 
 ## Setup
 
 ### 1. Create Firebase Project
 
 1. Go to [Firebase Console](https://console.firebase.google.com)
-2. Create new project (or use existing AIS project)
-3. Enable Firestore Database
-4. Select region closest to your location
+2. Create or open the AIS project
+3. Enable **Firestore Database** (Native mode)
+4. Choose a region close to your deployment location
 
-### 2. Create Service Account
+### 2. Service Account
 
 1. Firebase Console → Project Settings → Service Accounts
-2. Click "Generate new private key"
-3. Save JSON file as `config/firebase-service-account.json`
+2. Click **Generate new private key**
+3. Save the JSON file as `config/firebase-service-account.json`
 
-**Important:** Never commit this file! It grants write access to your database.
+> **Never commit this file.** It grants write access to the entire database.
 
-### 3. Firestore Security Rules
-
-Set these rules in Firebase Console → Firestore → Rules:
-
-```javascript
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    // AIS CV has full write access via service account
-    // Dashboard users have read-only access
-    
-    match /live/{document=**} {
-      allow read: if true;  // Public read for dashboard
-      allow write: if false; // Only service account writes
-    }
-    
-    match /counts/{document=**} {
-      allow read: if request.auth != null;
-      allow write: if false;
-    }
-    
-    match /daily/{document=**} {
-      allow read: if request.auth != null;
-      allow write: if false;
-    }
-    
-    match /hourly/{document=**} {
-      allow read: if request.auth != null;
-      allow write: if false;
-    }
-    
-    match /sessions/{document=**} {
-      allow read: if request.auth != null;
-      allow write: if false;
-    }
-  }
-}
-```
-
-### 4. Test Connection
+### 3. Test Connection
 
 ```bash
 cd /home/adityajain/AIS/ais-cv
@@ -180,189 +32,254 @@ python scripts/test_firebase.py
 Expected output:
 ```
 Firebase initialized successfully
-Today's count: 0
 Connection test passed!
 ```
 
-## Usage
+### 4. Firestore Security Rules
 
-### FirebaseClient API
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Public read for dashboards (live status only)
+    match /live/{doc=**} {
+      allow read: if true;
+      allow write: if false;  // Only service account writes
+    }
+    // Authenticated read for analytics
+    match /{collection=**} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+  }
+}
+```
+
+---
+
+## Firestore Schema
+
+### Collections Overview
+
+```
+Firestore
+├── live/
+│   └── mill_stand       ← CAM-2 real-time status
+│
+├── daily/{YYYY-MM-DD_cam2}   ← CAM-2 daily totals (composite doc ID)
+│
+├── hourly/{YYYY-MM-DD}/hours/{HH}  ← hourly breakdown
+│
+└── sessions/{id}        ← RUN/BREAK sessions (camera: 'CAM-2')
+```
+
+---
+
+## CAM-2 + CAM-3: Mill Stand Counter
+
+The mill stand counter writes session analytics and live status to Firestore.
+CAM-3 (channel 3, 1 area) counts the same pieces as CAM-2 from a different angle
+and its detections feed into the same median-reconciled joined count. All Firebase
+writes use `CAM-2` as the camera identifier — there are no separate `CAM-3` keys —
+because both cameras collectively produce a single authoritative piece count.
+
+**Piece-level data is stored locally only** — sufficient for dashboards and shift reporting.
+
+### What is NOT written to Firestore
+
+- Individual piece `counts/` documents
+- `vote_ratio`, `avg_travel_time`, `stands_detected` per piece
+- Entry/exit line pixel data
+
+### `live/mill_stand`
+
+```typescript
+{
+  today_count: number,
+  status: 'RUNNING' | 'BREAK' | 'OFFLINE',
+  last_count: Timestamp,
+  last_avg_travel_time: number,    // Avg entry→exit travel time of last piece (seconds)
+  date: string,
+  status_updated: Timestamp,
+  current_session: {
+    type: 'RUN' | 'BREAK',
+    start: Timestamp,
+    duration_minutes: number,
+    count: number
+  }
+}
+```
+
+### `daily/{YYYY-MM-DD_cam2}`
+
+Uses a composite document ID (`YYYY-MM-DD_cam2`, e.g. `2026-02-27_cam2`). The document carries a `camera` field for query filtering:
+
+```typescript
+{
+  count: number,
+  first_count: Timestamp,
+  last_count: Timestamp,
+  total_run_minutes: number,
+  total_break_minutes: number,
+  date: string,                // 'YYYY-MM-DD' (without the _cam2 suffix)
+  camera: 'CAM-2'
+}
+```
+
+### `hourly/{YYYY-MM-DD}/hours/{HH}`
+
+```typescript
+{
+  count: number,
+  run_minutes: number,
+  break_minutes: number
+}
+```
+
+### `sessions/{id}`
+
+```typescript
+{
+  type: 'RUN' | 'BREAK',
+  start: Timestamp,
+  end: Timestamp | null,
+  date: string,
+  hour: string,
+  duration_minutes: number,
+  count: number,
+  average_speed: number,        // Avg entry→exit travel time (RUN sessions)
+  camera: 'CAM-2'
+}
+```
+
+---
+
+## FirebaseClient API
 
 ```python
 from src.firebase_client import get_firebase_client
 
-# Get singleton client
 firebase = get_firebase_client()
+firebase.initialize()  # Call once at startup; returns bool
 
-# Initialize (call once at startup)
-if firebase.initialize():
-    print("Connected!")
+# Increment live/mill_stand, daily/, hourly/ — does NOT write to counts/
+firebase.push_mill_count({
+    'timestamp': datetime.now(IST),
+}, session_info={'run_minutes_since_last': 0.3})
 
-# Push a count
-firebase.push_count({
-    'timestamp': datetime.now(),
-    'travel_time': 1.85,
-    'confidence': 87.5,
-    'line_pixels': {'L1': 245, 'L2': 230, 'L3': 218},
-    'line_frames': {'L1': 3, 'L2': 3, 'L3': 2},
-    'line_brightness': {'L1': 185.2, 'L2': 182.1, 'L3': 179.8},
-    'photo_filename': 'count_42_20260112_143215.jpg'
-}, session_info={'run_minutes_since_last': 0.5})
+firebase.update_mill_status('RUNNING', session_info)
+firebase.get_mill_today_count()
 
-# Push completed session
-firebase.push_session({
-    'type': 'RUN',
-    'start': start_time,
-    'end': end_time,
-    'date': '2026-01-12',
-    'hour': '14',
-    'duration_minutes': 45.5,
-    'count': 127
-})
+# Session lifecycle
+firebase.create_session(session)   # Called when session STARTS
+firebase.update_session(session)   # Called as count increments
 
-# Update status
-firebase.update_status('RUNNING', {
-    'type': 'RUN',
-    'start': session_start,
-    'duration_minutes': 12.3
-})
-
-# Reset daily count (call at midnight)
-firebase.reset_daily_count()
-
-# Get current count
-count = firebase.get_today_count()
+# Startup recovery
+last = firebase.get_last_session()  # Returns dict or None
 ```
 
-### Session Info for Run Time Tracking
-
-When pushing counts, include `session_info` to track run time:
-
-```python
-# When a piece is counted
-session_info = {
-    'run_minutes_since_last': elapsed_minutes  # Time since last count
-}
-firebase.push_count(count_data, session_info)
-```
-
-This enables accurate run time tracking even when pieces are counted irregularly.
+---
 
 ## Querying Data
 
-### From Web Dashboard
+### Real-Time Dashboard (JavaScript)
 
 ```javascript
-// Real-time listener for live status
 import { doc, onSnapshot } from 'firebase/firestore';
 
-const liveRef = doc(db, 'live', 'furnace');
-onSnapshot(liveRef, (doc) => {
-  const data = doc.data();
-  console.log(`Count: ${data.today_count}, Status: ${data.status}`);
+// CAM-2 live status
+onSnapshot(doc(db, 'live', 'mill_stand'), (snap) => {
+  const { today_count, status, last_avg_travel_time } = snap.data();
 });
 ```
 
-### Historical Queries
+### Daily Summary
 
 ```javascript
-// Get today's hourly breakdown
+import { doc, getDoc } from 'firebase/firestore';
+
 const today = new Date().toISOString().split('T')[0];
-const hourlyRef = collection(db, 'hourly', today, 'hours');
-const snapshot = await getDocs(hourlyRef);
-
-snapshot.forEach(doc => {
-  console.log(`Hour ${doc.id}: ${doc.data().count} pieces`);
-});
-
-// Get counts needing review
-const countsRef = collection(db, 'counts');
-const q = query(countsRef, 
-  where('flagged', '==', true),
-  where('reviewed', '==', false),
-  orderBy('timestamp', 'desc'),
-  limit(50)
-);
+const cam2  = await getDoc(doc(db, 'daily', `${today}_cam2`));
+// cam2.data().count, .total_run_minutes, .camera === 'CAM-2'
 ```
+
+### Hourly Breakdown
+
+```javascript
+import { collection, getDocs } from 'firebase/firestore';
+
+const hours = await getDocs(
+  collection(db, 'hourly', '2026-02-24', 'hours')
+);
+hours.forEach(doc => {
+  console.log(`${doc.id}:00 → ${doc.data().count} pieces`);
+});
+```
+
+### Session History
+
+```javascript
+import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
+
+// Recent CAM-2 sessions
+const q = query(
+  collection(db, 'sessions'),
+  where('camera', '==', 'CAM-2'),
+  where('type', '==', 'RUN'),
+  orderBy('start', 'desc'),
+  limit(20)
+);
+const snap = await getDocs(q);
+```
+
+---
 
 ## Offline Mode
 
-Run counter without Firebase sync:
-
 ```bash
-python scripts/run_counter.py --no-firebase
+# Run without Firebase (counts logged locally only)
+python scripts/run_mill_counter.py --no-firebase
 ```
 
-Data is still logged locally. Later sync can be implemented if needed.
-
-## Data Retention
-
-### Recommended Cleanup
-
-```javascript
-// Cloud Function to delete old counts (optional)
-exports.cleanupOldCounts = functions.pubsub
-  .schedule('0 0 * * *')  // Daily at midnight
-  .onRun(async (context) => {
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - 90);  // 90 days retention
-    
-    const snapshot = await db.collection('counts')
-      .where('timestamp', '<', cutoff)
-      .limit(500)
-      .get();
-    
-    const batch = db.batch();
-    snapshot.docs.forEach(doc => batch.delete(doc.ref));
-    await batch.commit();
-  });
-```
+---
 
 ## Troubleshooting
 
 ### "Failed to initialize Firebase"
 
-1. Check service account file exists:
-   ```bash
-   ls -la config/firebase-service-account.json
-   ```
+```bash
+# Check file exists
+ls -la config/firebase-service-account.json
 
-2. Verify file is valid JSON:
-   ```bash
-   python -c "import json; json.load(open('config/firebase-service-account.json'))"
-   ```
+# Validate JSON
+python -c "import json; json.load(open('config/firebase-service-account.json'))"
 
-3. Check project ID matches:
-   ```bash
-   cat config/firebase-service-account.json | grep project_id
-   ```
+# Check project ID
+python -c "import json; print(json.load(open('config/firebase-service-account.json'))['project_id'])"
+```
 
 ### "Permission denied"
 
-1. Check Firestore rules allow writes from service account
-2. Verify service account has "Cloud Datastore User" role
-3. Regenerate service account key if corrupted
+1. Check Firestore rules allow service account writes
+2. Verify the service account has the **Cloud Datastore User** IAM role
+3. Regenerate the service account key in Firebase Console
 
-### "Network unreachable"
+### Data not appearing
 
-1. Check internet connectivity:
-   ```bash
-   ping google.com
-   ```
+1. Check `live/mill_stand` exists in Firestore Console
+2. Verify the `date` field on the document matches today (`YYYY-MM-DD` format)
+3. Check `data/logs/mill_counter.log` for Firebase error lines
 
-2. Check firewall allows HTTPS:
-   ```bash
-   curl https://firestore.googleapis.com
-   ```
+### High write latency
 
-### High Latency
+- Firestore writes are async and fire-and-forget — they do not block counting
+- Batch writes are not used (each event is small, latency is acceptable)
+- Check quota usage in Firebase Console → Usage tab
 
-1. Use batch writes for multiple operations
-2. Consider regional Firestore location
-3. Monitor quota usage in Firebase Console
+---
 
 ## Related Documentation
 
 - [Architecture](ARCHITECTURE.md)
-- [Configuration](CONFIGURATION.md)
 - [Deployment](DEPLOYMENT.md)
+- [Troubleshooting](TROUBLESHOOTING.md)

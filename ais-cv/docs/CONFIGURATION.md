@@ -18,89 +18,6 @@ nano config/settings.yaml
 
 ## Configuration Reference
 
-### Camera Settings
-
-```yaml
-camera:
-  name: "Furnace Opening"     # Display name
-  id: "CAM-1"                 # Unique identifier
-  role: "primary"             # primary | secondary | tertiary
-  
-  # RTSP URL format for Dahua NVR:
-  # Main Stream: rtsp://USER:PASS@IP:554/cam/realmonitor?channel=N&subtype=0
-  # Sub Stream:  rtsp://USER:PASS@IP:554/cam/realmonitor?channel=N&subtype=1
-  rtsp_url: "rtsp://admin:password@192.168.1.100:554/cam/realmonitor?channel=1&subtype=1"
-  
-  resolution: [704, 576]      # Expected resolution [width, height]
-  fps: 25                     # Stream FPS
-  codec: "h265"               # h264 | h265
-  
-  reconnect_attempts: 5       # Retry attempts on disconnect
-  reconnect_delay_seconds: 5  # Seconds between retries
-```
-
-**Notes:**
-- Use **Sub Stream** (subtype=1) for CV processing - lower bandwidth, sufficient quality
-- Replace `USER:PASS@IP` with your NVR credentials
-- Channel number corresponds to camera position in NVR
-
-### Region of Interest (ROI)
-
-```yaml
-roi:
-  furnace_door:
-    x: 100          # Top-left X coordinate
-    y: 50           # Top-left Y coordinate
-    width: 500      # ROI width in pixels
-    height: 400     # ROI height in pixels
-```
-
-ROI defines the area of the frame to analyze. Use `scripts/visualize_roi.py` to preview.
-
-### Counting Lines Configuration
-
-```yaml
-counting_lines:
-  line1:
-    start: [480, 225]   # [x, y] start point
-    end: [540, 215]     # [x, y] end point
-  line2:
-    start: [525, 280]
-    end: [585, 270]
-  line3:
-    start: [565, 335]
-    end: [630, 325]
-  flow_direction:
-    start: [530, 215]   # Arrow start (visual only)
-    end: [620, 330]     # Arrow end (visual only)
-```
-
-**Calibration:**
-- Lines should be perpendicular to conveyor flow
-- L1 → L2 → L3 in direction of travel
-- Use `scripts/calibrate_lines.py` for interactive adjustment
-- See [Calibration Guide](CALIBRATION.md) for details
-
-### Counting Thresholds
-
-```yaml
-counting:
-  luminosity_threshold: 150    # Brightness threshold (0-255)
-  min_bright_pixels: 80        # Minimum bright pixels to trigger
-  sequence_timeout: 4.0        # Max seconds for L1→L3 sequence
-  min_travel_time: 0.2         # Min seconds for L1→L3 (noise filter)
-  line_thickness: 10           # Pixels around line to check
-  min_consecutive_frames: 2    # Frames to confirm detection
-```
-
-| Parameter | Tuning Guide |
-|-----------|--------------|
-| `luminosity_threshold` | Lower = more sensitive, higher = only bright hot steel |
-| `min_bright_pixels` | Increase if getting false positives from ambient light |
-| `sequence_timeout` | Based on max piece travel time across lines |
-| `min_travel_time` | Increase if noise triggers all 3 lines instantly |
-| `min_consecutive_frames` | Increase for more reliability, decrease if missing pieces |
-
 ### Detection Settings (State Detection)
 
 ```yaml
@@ -119,11 +36,72 @@ detection:
 
 ### Mill Stand Counters
 
-AIS-CV supports two mill-stand counting modes:
+AIS-CV supports three mill-stand counting configurations:
 
-1. `mill_stand` (zone-based, single view; primarily for offline/video analysis)
-2. `mill_stand_lines` (line-based, multi-view; recommended for live RTSP)
+1. `counting_areas` — **production**: independent multi-area 2-line detection with Firebase (`run_mill_counter.py`)
+2. `mill_stand_lines` — legacy multi-view voting counter, no Firebase (`run_mill_stand_multi.py`)
+3. `mill_stand` — zone-based, offline/video analysis only
 
+#### `counting_areas` (production — `run_mill_counter.py`)
+
+Each area is fully independent: it has its own ROI, L1, L2, and running counter.
+The joined count pushed to Firebase is the median of all area totals.
+
+```yaml
+counting_areas:
+  divergence_warn_threshold: 3   # Warn when max(area counts) - min(area counts) > N
+  areas:
+    - name: Area 1
+      order: 1                   # Sort order for display; does not affect YAML index
+      camera_rtsp: rtsp://admin:PASS@192.168.1.200:554/cam/realmonitor?channel=2&subtype=1
+      roi:
+        start: [x1, y1]          # Top-left of masking rectangle (full-frame pixels)
+        end:   [x2, y2]          # Bottom-right
+      line1:
+        start: [x, y]            # L1 start endpoint (full-frame pixels)
+        end:   [x, y]
+      line2:
+        start: [x, y]            # L2 start endpoint (full-frame pixels)
+        end:   [x, y]
+      min_line_pixels: 20        # Per-area min bright pixels to trigger a line
+                                 # (overrides --min-line-pixels CLI default)
+      use_bg_subtraction: true   # Replace absolute brightness threshold with
+                                 # per-line EMA background subtraction.
+                                 # Recommended when sunlight saturates the background.
+      bg_delta: 30               # Trigger when pixel brightness exceeds
+                                 # (EMA baseline + bg_delta). Active only when
+                                 # use_bg_subtraction: true.
+                                 # Raise to reduce false positives; lower if missing pieces.
+
+    - name: Area 2
+      order: 2
+      # ... same structure
+
+    - name: Area 3
+      order: 3
+      # ... same structure
+```
+
+**Notes:**
+
+- All coordinates are in the **resized frame** (704×576 after `StreamManager` resize).
+- L1 and L2 **must lie inside the ROI rectangle** — pixels outside the ROI are zeroed
+  before line brightness is checked.
+- The `order` field controls sort order in the HUD; it does not change which YAML
+  array index is written when you press `S` to save. The internal `yaml_idx` tracks
+  the original array position.
+- `min_line_pixels` overrides the `--min-line-pixels` CLI default on a per-area basis.
+  Adjust interactively with `[` / `]` keys in `--display` mode and save with `S`.
+- `use_bg_subtraction` replaces the absolute `--brightness-threshold` check with a
+  rolling per-pixel EMA baseline. Set `true` for outdoor or sunlit environments.
+  The baseline warms up over ~20 seconds on startup.
+- `bg_delta` controls how much above the local background a pixel must be to count
+  as "bright". Default 30. Tune per-area; the YAML value overrides `--bg-delta`.
+- Calibrate interactively: `python scripts/run_mill_counter.py --display --no-firebase`
+- See [Calibration Guide](CALIBRATION.md#cam-2-mill-stand-calibration-run_mill_counterpy)
+  for step-by-step instructions.
+
+---
 #### `mill_stand` (zone-based)
 
 ```yaml
@@ -213,7 +191,8 @@ Environment variable overrides:
 Related scripts:
 
 - `scripts/calibrate_mill_stand_master.py` (edit ROI/lines/counting with live preview; saves to `config/settings.yaml`)
-- `scripts/run_mill_stand_multi.py` (run multi-view counter from RTSP)
+- `scripts/run_mill_stand_multi.py` (run multi-view counter from RTSP, no Firebase)
+- `scripts/run_mill_counter.py` (run multi-view counter with Firebase analytics)
 
 ### Photo Capture
 
@@ -234,11 +213,6 @@ logging:
   level: "INFO"              # DEBUG | INFO | WARNING | ERROR
   rotation: "daily"          # Log rotation policy
 ```
-
-**Log Files:**
-- `counter.log` - Main application log
-- `counter-error.log` - Error-only log
-- `state_changes_YYYY-MM-DD.csv` - State transition log
 
 ## Environment Variables
 
@@ -262,19 +236,6 @@ See [Firebase Integration Guide](FIREBASE.md) for Firestore setup.
 Test your configuration:
 
 ```bash
-# Test camera connection
-python -c "
-import yaml
-import cv2
-
-with open('config/settings.yaml') as f:
-    config = yaml.safe_load(f)
-
-cap = cv2.VideoCapture(config['camera']['rtsp_url'])
-print('Connected!' if cap.isOpened() else 'Failed!')
-cap.release()
-"
-
 # Test Firebase connection
 python scripts/test_firebase.py
 ```
@@ -284,46 +245,6 @@ python scripts/test_firebase.py
 ```yaml
 # AIS CV Configuration
 # Copy to settings.yaml and customize
-
-camera:
-  name: "Furnace Opening"
-  id: "CAM-1"
-  role: "primary"
-  rtsp_url: "rtsp://admin:mypassword@192.168.1.108:554/cam/realmonitor?channel=1&subtype=1"
-  resolution: [704, 576]
-  fps: 25
-  codec: "h265"
-  reconnect_attempts: 5
-  reconnect_delay_seconds: 5
-
-roi:
-  furnace_door:
-    x: 100
-    y: 50
-    width: 500
-    height: 400
-
-counting_lines:
-  line1:
-    start: [480, 225]
-    end: [540, 215]
-  line2:
-    start: [525, 280]
-    end: [585, 270]
-  line3:
-    start: [565, 335]
-    end: [630, 325]
-  flow_direction:
-    start: [530, 215]
-    end: [620, 330]
-
-counting:
-  luminosity_threshold: 150
-  min_bright_pixels: 80
-  sequence_timeout: 4.0
-  min_travel_time: 0.2
-  line_thickness: 10
-  min_consecutive_frames: 2
 
 detection:
   luminosity_threshold: 180
