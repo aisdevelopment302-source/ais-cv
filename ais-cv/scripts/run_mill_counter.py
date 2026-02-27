@@ -822,11 +822,16 @@ class StreamManager:
 # HUD drawing
 # ---------------------------------------------------------------------------
 def _cam_label(rtsp_url: str) -> str:
-    """Extract a short camera label from an RTSP URL, e.g. 'CAM-2' or 'CAM-3'.
-    Falls back to the full URL tail if the channel parameter is not found."""
+    """Extract a short camera label from an RTSP URL or file path.
+    e.g. 'CAM-2', 'CAM-3', or the filename stem for local files."""
     import re
     m = re.search(r'channel=(\d+)', rtsp_url)
-    return f"CAM-{m.group(1)}" if m else rtsp_url[-12:]
+    if m:
+        return f"CAM-{m.group(1)}"
+    # Local file path — return the filename without extension
+    from pathlib import Path as _Path
+    stem = _Path(rtsp_url).stem
+    return stem[:14] if stem else rtsp_url[-12:]
 
 
 def draw_area_hud(
@@ -1015,6 +1020,8 @@ def run_mill_counter(
     sequence_timeout: float = 4.0,
     max_dwell_time: float = 2.0,
     bg_delta: int = 30,
+    video_cam2: Optional[str] = None,
+    video_cam3: Optional[str] = None,
 ):
     load_env(PROJECT_ROOT / ".env")
     config = load_config()
@@ -1045,6 +1052,34 @@ def run_mill_counter(
         quorum=quorum,
         divergence_warn_threshold=divergence_warn_threshold,
     )
+
+    # --- Override RTSP URLs with local video files for testing ---
+    CAM2_RTSP_MARKER = "channel=2"
+    CAM3_RTSP_MARKER = "channel=3"
+    if video_cam2 or video_cam3:
+        kept = []
+        for adet in area_detectors:
+            url = adet.cfg.camera_rtsp
+            if video_cam2 and CAM2_RTSP_MARKER in url:
+                adet.cfg.camera_rtsp = video_cam2
+                logger.info(f"[replay] {adet.cfg.name}: using local file {video_cam2}")
+                kept.append(adet)
+            elif video_cam3 and CAM3_RTSP_MARKER in url:
+                adet.cfg.camera_rtsp = video_cam3
+                logger.info(f"[replay] {adet.cfg.name}: using local file {video_cam3}")
+                kept.append(adet)
+            else:
+                logger.info(f"[replay] {adet.cfg.name}: skipping (no video file provided for its camera)")
+        area_detectors = kept
+        n_areas = len(area_detectors)
+        # Rebuild reconciler with the reduced area count
+        reconciler = QuorumReconciler(
+            n_areas=n_areas,
+            piece_window_seconds=piece_window_seconds,
+            min_inter_area_gap_seconds=min_inter_area_gap,
+            quorum=min(quorum, n_areas),
+            divergence_warn_threshold=divergence_warn_threshold,
+        )
 
     # --- Stream manager ---
     all_rtsp = [d.cfg.camera_rtsp for d in area_detectors]
@@ -1164,9 +1199,15 @@ def run_mill_counter(
                         print_help()
                 continue
 
-            # Reconnect any down streams
-            for url in stream_mgr.any_down():
-                stream_mgr.reconnect(url)
+            # Reconnect any down streams (skip if replaying local files — EOF = done)
+            replay_mode = bool(video_cam2 or video_cam3)
+            down = stream_mgr.any_down()
+            if down:
+                if replay_mode:
+                    logger.info("[replay] Stream ended (EOF) — stopping.")
+                    break
+                for url in down:
+                    stream_mgr.reconnect(url)
 
             # Read all frames
             frames = stream_mgr.read_all()
@@ -1564,6 +1605,10 @@ def main():
                         help='Max continuous line trigger before suppression (default: 2.0)')
     parser.add_argument('--bg-delta', type=int, default=30,
                         help='BG subtraction delta: pixels must be this many units above EMA baseline (default: 30, overridden per-area by settings.yaml)')
+    parser.add_argument('--video-cam2', type=str, default=None,
+                        help='Local video file to use instead of CAM-2 RTSP stream (for testing/replay)')
+    parser.add_argument('--video-cam3', type=str, default=None,
+                        help='Local video file to use instead of CAM-3 RTSP stream (for testing/replay)')
     args = parser.parse_args()
 
     run_mill_counter(
@@ -1577,6 +1622,8 @@ def main():
         sequence_timeout=args.sequence_timeout,
         max_dwell_time=args.max_dwell_time,
         bg_delta=args.bg_delta,
+        video_cam2=args.video_cam2,
+        video_cam3=args.video_cam3,
     )
 
 
