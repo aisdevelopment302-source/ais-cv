@@ -4,7 +4,7 @@ Counts hot steel pieces at the mill stand using Camera 2 (NVR channel 2, 3 areas
 and Camera 3 (NVR channel 3, 1 area). All four areas count the same pieces from
 different angles for redundancy.
 The production counter is `scripts/run_mill_counter.py` — multi-area independent
-2-line detection with Firebase integration and median-based count reconciliation.
+2-line detection with Firebase integration and quorum-based count reconciliation.
 
 ---
 
@@ -24,14 +24,18 @@ A piece is detected at an area when L1 confirms bright pixels for
 `sequence_timeout`.  Each area counts **fully independently** — no ordering or voting
 between areas is required.
 
-After every detection, a `CountReconciler` computes:
+After every per-area detection, a `QuorumReconciler` evaluates:
 
-```
-joined_count = median(counts for all areas)
-```
-
-This is the authoritative count pushed to Firebase. If `max(counts) - min(counts) >
-divergence_warn_threshold` a warning is logged.
+- **Quorum:** a piece is confirmed only when `≥ quorum` (default 2) distinct areas
+  fire within a `piece_window_seconds` (default 5 s) sliding window
+- **False-positive rejection:** if two area fires arrive less than
+  `min_inter_area_gap_seconds` (default 1.5 s) apart, the second is discarded —
+  this suppresses the classic false positive where a person walks through CAM-2
+  Areas 1 and 3 (which are physically close) nearly simultaneously
+- **Missed count recovery (dwell spike re-arm):** if a piece is already holding L1
+  or L2 in dwell suppression when a new piece arrives, the new piece's brightness
+  spike (> 30% above the dwell peak) resets the dwell timer so a fresh L1/L2
+  rising edge can fire
 
 ```
 CAM-2 RTSP frame                         CAM-3 RTSP frame
@@ -44,19 +48,20 @@ StreamManager (one VideoCapture per unique URL)
        ├─▶ AreaDetector 3 (CAM-2)  →  count_3   │
                                                   └─▶ AreaDetector 4 (CAM-3) → count_4
                                                            │
-                                                  CountReconciler
-                                    joined = median(count_1, count_2, count_3, count_4)
+                                                  QuorumReconciler
+                          piece confirmed when ≥ quorum areas fire within piece_window_seconds
+                          near-simultaneous (< min_inter_area_gap_s) → rejected as false positive
                                                            │
                                                     Firebase push
-                                               (only when joined increases)
+                                               (only when piece_count increases)
 ```
 
 **Why multiple areas across two cameras?**
 Different physical positions on the same feed (CAM-2 areas 1–3) give redundancy
 within one camera. CAM-3 (area 4) adds a completely independent camera angle,
-further protecting against a single camera mis-detecting. The median rejects a
-single runaway counter (e.g. an area whose lines catch reflections). If all areas
-diverge by more than `divergence_warn_threshold`, the operator is alerted.
+further protecting against a single camera mis-detecting. The quorum requirement
+rejects false positives from person/debris events. If all areas diverge by more
+than `divergence_warn_threshold`, the operator is alerted.
 
 **Why ROI masking?**
 Without it, a glowing piece in Area 1's field of view can falsely trigger Area 2's
@@ -171,7 +176,11 @@ python scripts/run_mill_stand_compare_cam2.py
 
 ```yaml
 counting_areas:
-  divergence_warn_threshold: 3   # Warn when max(areas) - min(areas) exceeds this
+  # Quorum reconciler
+  piece_window_seconds: 5.0          # Areas must fire within this window to count as one piece
+  min_inter_area_gap_seconds: 1.5    # Reject trigger if previous area fired < this many seconds ago
+  quorum: 2                          # Distinct areas needed to confirm a piece
+  divergence_warn_threshold: 3       # Warn when max(areas) - min(areas) exceeds this
   areas:
     - name: Area 1
       order: 1
@@ -188,6 +197,7 @@ counting_areas:
       min_line_pixels: 20        # Per-area override of --min-line-pixels
       use_bg_subtraction: true   # Enable EMA background subtraction (recommended in sunlight)
       bg_delta: 30               # Trigger when pixel > baseline + bg_delta
+      dwell_spike_factor: 0.3    # Re-arm factor: spike > peak*(1+factor) restarts dwell
 
     - name: Area 2
       order: 2
@@ -204,6 +214,7 @@ counting_areas:
       min_line_pixels: 10
       use_bg_subtraction: true
       bg_delta: 30
+      dwell_spike_factor: 0.3
 ```
 
 **Coordinate system:** All coordinates (ROI and lines) are in the **full frame** space
@@ -245,7 +256,40 @@ Grayscale conversion
 `> max_dwell_time` seconds (person standing on line, debris) the trigger is
 suppressed until it clears.
 
-### Background Subtraction (`use_bg_subtraction`)
+**Dwell spike re-arm:** While dwell is suppressed, the detector tracks the
+maximum bright-pixel count seen during the dwell. If the current count jumps
+above `peak * (1 + dwell_spike_factor)`, the dwell timer resets and a new
+rising edge can fire — allowing the next piece to be detected even while the
+previous one is still in view. Configure per-area with `dwell_spike_factor`
+(default `0.3` = 30% above peak). Events logged as `L1_DWELL_SPIKE_REARM` or
+`L2_DWELL_SPIKE_REARM` in the CSV log.
+
+### Quorum Reconciler
+
+```
+Any area triggers
+        │
+        ▼
+counts[area_idx] += 1
+QuorumReconciler.on_area_triggered(idx, now)
+  ├── prune triggers older than piece_window_seconds
+  ├── near-simultaneous? (gap < min_inter_area_gap_s) → discard as false positive
+  ├── accept trigger into window
+  └── distinct areas in window >= quorum?
+        YES → piece_count += 1  (clear window)
+              → push Firebase + flash HUD
+        NO  → wait for more areas
+diverged = (max(counts) - min(counts)) > divergence_warn_threshold → log WARNING
+```
+
+**Quorum examples (quorum=2, piece_window=5s, min_gap=1.5s):**
+
+| Scenario | Result |
+|----------|--------|
+| Area 1 fires, Area 2 fires 1.8 s later | ✅ Confirmed (2 distinct areas in window) |
+| Area 1 fires, Area 3 fires 0.9 s later | ❌ Rejected (gap < 1.5 s, false positive) |
+| Area 1 fires, nothing for 5 s | ❌ Window expires — piece not confirmed |
+| Area 2 fires, Area 4 fires 3 s later | ✅ Confirmed (any 2 areas suffice) |
 
 When `use_bg_subtraction: true` is set on an area, the absolute brightness
 threshold (`pixel > brightness_threshold`) is replaced with a **per-line EMA
@@ -290,25 +334,6 @@ on each line. It reaches a stable background estimate after ~20 seconds
 reliable if the camera is pointed at a bright scene.
 
 
-
-```
-Any area triggers
-        │
-        ▼
-counts[area_idx] += 1
-joined_count = int(statistics.median(counts))
-diverged = (max(counts) - min(counts)) > divergence_warn_threshold
-        │
-        ├── diverged? → log WARNING with counts
-        └── joined_count increased? → push Firebase + flash HUD
-```
-
-The median means:
-- 1 area of 4 running ahead: `[7, 5, 5, 5]` → joined = 5 (correct)
-- All areas agree: `[5, 5, 5, 5]` → joined = 5
-- CAM-3 lagging: `[5, 5, 5, 3]` → joined = 5 (CAM-3 doesn't pull median down)
-- 2 areas ahead, 2 behind: `[6, 6, 5, 5]` → joined = 5 (floor of avg of middle values)
-
 ---
 
 ## HUD (display mode)
@@ -318,11 +343,11 @@ The overlay drawn on each camera window shows:
 ```
 FOCUSED: Area 1  [Tab/1-9=cycle  S=save  R=reset  H=help]
 ┌──────────────────────────────────────┐
-│ COUNT: 42                            │   ← joined (median) count; flashes yellow on hit
-│ (median of all areas)                │
+│ COUNT: 42                            │   ← piece_count (quorum-confirmed); flashes yellow on hit
+│ window: 1/2 areas                    │   ← areas fired in current window / quorum required
 │ ───────────────────────────────────  │
-│ [*] Area 1 [CAM-2]: 42              │   ← [*] = matches joined count
-│ [ ] Area 2 [CAM-2]: 41              │   ← [ ] = diverged from joined
+│ [*] Area 1 [CAM-2]: 42              │   ← [*] = matches piece_count
+│ [ ] Area 2 [CAM-2]: 41              │   ← [ ] = diverged from piece_count
 │ [*] Area 3 [CAM-2]: 42              │
 │ [*] CAM3 Area 1 [CAM-3]: 42        │   ← CAM-3's independent vote
 │ divergence: OK                       │   ← red "! DIVERGENCE WARNING" if triggered
@@ -404,13 +429,16 @@ full details.
 2. Increase `--min-consecutive-frames` (try 3)
 3. Reduce `--sequence-timeout` to prevent stale L1 state from pairing with a later L2
 
-### Joined count not increasing even when areas trigger
+### Piece count not increasing even when areas trigger
 
-The joined count is the **median** — a single area firing repeatedly won't raise the
-joined count if the other areas haven't caught up. With 4 areas, examples:
-`counts=[1,0,0,0]` → `median=0`, `counts=[1,1,0,0]` → `median=0`,
-`counts=[1,1,1,0]` → `median=1`. This is by design. If only one area is
-reliably detecting, consider removing the non-detecting areas from the config.
+The `piece_count` uses a **quorum** — a single area firing alone will not
+confirm a piece. With `quorum: 2`, at least 2 distinct areas must fire
+within `piece_window_seconds` (default 5 s). If only one area is reliably
+detecting, check calibration on the other areas or reduce `quorum` to `1`
+in `settings.yaml` as a temporary measure. Also note that two areas firing
+less than `min_inter_area_gap_seconds` (default 1.5 s) apart are treated as
+a false positive — the second is discarded. If legitimate pieces are
+triggering two areas within 1.5 s, reduce `min_inter_area_gap_seconds`.
 
 ### Divergence warning constantly firing
 
@@ -434,10 +462,10 @@ was actually written.
 |----------------|---------|
 | `live/mill_stand` status | Every 60s heartbeat + on piece counted + on break |
 | `sessions/{id}` create | When mill starts running after a break |
-| `sessions/{id}` update | Every time joined count increases |
+| `sessions/{id}` update | Every time `piece_count` increases (quorum confirmed) |
 | `sessions/{id}` end | When break detected (idle > 300s) or shutdown |
-| `daily/{date}` increment | Every time joined count increases |
-| `hourly/{date}/hours/{HH}` | Every time joined count increases |
+| `daily/{date}` increment | Every time `piece_count` increases (quorum confirmed) |
+| `hourly/{date}/hours/{HH}` | Every time `piece_count` increases (quorum confirmed) |
 
 On startup, `get_mill_today_count()` is read from Firebase and used to seed all area
 counters so the reconciler starts from the correct daily baseline.

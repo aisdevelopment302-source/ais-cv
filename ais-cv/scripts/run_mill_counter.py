@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
 """
-AIS Mill Stand Counter - Multi-Area Independent Counting (Firebase-enabled)
-============================================================================
+AIS Mill Stand Counter - Multi-Area Quorum Counting (Firebase-enabled)
+=======================================================================
 Counts hot steel pieces at the mill stand using multiple independent 2-line
 detection areas.  Currently configured areas span CAM-2 (Channel 2, 3 areas)
 and CAM-3 (Channel 3, 1 area) — all counting the same pieces from different
 angles for redundancy.  Area configurations (RTSP URL, ROI, L1, L2) are
 loaded from counting_areas in config/settings.yaml.
 
-Each area runs its own independent counter (L1 → L2).  After every detection
-a CountReconciler computes the joined count as the median of all area totals
-and pushes it to Firebase.  Divergence between areas is logged as a warning.
+Each area runs its own independent counter (L1 → L2).  After every area
+detection a QuorumReconciler confirms a piece when at least `quorum` distinct
+areas fire within a `piece_window_seconds` sliding window.  Near-simultaneous
+triggers (< `min_inter_area_gap_seconds` apart) are rejected as false positives
+(e.g. a person walking through two adjacent detection zones on the same camera).
+
+Missed counts when a piece is already occupying a line (dwell suppression) are
+recovered via brightness spike re-arm: if the bright-pixel count surges 30%+
+above the running peak during dwell, the dwell timer resets and a new L1/L2
+rising edge can fire again for the new piece.
 
 Features:
 - Multi-area independent 2-line detection (L1 → L2 per area)
-- Joined count = median of all area totals (recomputed after every detection)
+- Quorum reconciler: 2-of-N areas must confirm within 5 s window
+- Near-simultaneous trigger rejection (< 1.5 s gap = false positive)
+- Dwell-spike re-arm for missed counts when piece overlaps a dwelled line
 - Divergence warning when max(areas) - min(areas) > threshold
 - One cv2.VideoCapture per unique RTSP URL (shared across areas on same camera)
 - One cv2.namedWindow per unique camera in display mode
@@ -35,7 +44,6 @@ Usage:
 """
 
 import csv
-import statistics
 import cv2
 import numpy as np
 import yaml
@@ -275,6 +283,7 @@ class TwoLineDetector:
         line_thickness: int = 8,
         debounce: float = 0.3,
         max_dwell_time: float = 2.0,
+        dwell_spike_factor: float = 0.3,
         csv_path: Optional[Path] = None,
         use_bg_subtraction: bool = False,
         bg_delta: int = 30,
@@ -287,6 +296,7 @@ class TwoLineDetector:
         self.line_thickness = line_thickness
         self.debounce = debounce
         self.max_dwell_time = max_dwell_time
+        self.dwell_spike_factor = dwell_spike_factor
         self.use_bg_subtraction = use_bg_subtraction
         self.bg_delta = bg_delta
         self.bg_alpha = bg_alpha
@@ -303,6 +313,9 @@ class TwoLineDetector:
         # Dwell tracking
         self._l1_dwell_start: Optional[float] = None
         self._l2_dwell_start: Optional[float] = None
+        # Peak bright-pixel count seen during each ongoing dwell period (for spike re-arm)
+        self._l1_bright_peak: int = 0
+        self._l2_bright_peak: int = 0
 
         # Background subtraction baselines (EMA, float32, per-pixel on mask)
         # Initialised lazily on first frame.
@@ -402,20 +415,49 @@ class TwoLineDetector:
         if l1_trig:
             if self._l1_dwell_start is None:
                 self._l1_dwell_start = timestamp
-            elif timestamp - self._l1_dwell_start > self.max_dwell_time:
-                l1_trig = False
-                event = "L1_DWELL_SUPPRESSED"
+                self._l1_bright_peak = l1_bright
+            else:
+                # Track peak while continuously triggered
+                if l1_bright > self._l1_bright_peak:
+                    self._l1_bright_peak = l1_bright
+                if timestamp - self._l1_dwell_start > self.max_dwell_time:
+                    # Spike re-arm: a new piece arrived while an old one is still
+                    # holding the line.  If brightness jumps significantly above the
+                    # peak seen so far, reset dwell and re-arm a fresh L1 crossing.
+                    spike_threshold = self._l1_bright_peak * (1 + self.dwell_spike_factor)
+                    if l1_bright > spike_threshold:
+                        self._l1_dwell_start = timestamp
+                        self._l1_bright_peak = l1_bright
+                        # Re-arm: clear confirmed state so rising-edge fires again
+                        self.state.l1_confirmed = False
+                        event = "L1_DWELL_SPIKE_REARM"
+                    else:
+                        l1_trig = False
+                        event = "L1_DWELL_SUPPRESSED"
         else:
             self._l1_dwell_start = None
+            self._l1_bright_peak = 0
 
         if l2_trig:
             if self._l2_dwell_start is None:
                 self._l2_dwell_start = timestamp
-            elif timestamp - self._l2_dwell_start > self.max_dwell_time:
-                l2_trig = False
-                event = "L2_DWELL_SUPPRESSED"
+                self._l2_bright_peak = l2_bright
+            else:
+                if l2_bright > self._l2_bright_peak:
+                    self._l2_bright_peak = l2_bright
+                if timestamp - self._l2_dwell_start > self.max_dwell_time:
+                    spike_threshold = self._l2_bright_peak * (1 + self.dwell_spike_factor)
+                    if l2_bright > spike_threshold:
+                        self._l2_dwell_start = timestamp
+                        self._l2_bright_peak = l2_bright
+                        self.state.l2_confirmed = False
+                        event = "L2_DWELL_SPIKE_REARM"
+                    else:
+                        l2_trig = False
+                        event = "L2_DWELL_SUPPRESSED"
         else:
             self._l2_dwell_start = None
+            self._l2_bright_peak = 0
 
         # --- Line 1 consecutive tracking ---
         if l1_trig:
@@ -506,6 +548,8 @@ class TwoLineDetector:
         self._last_l2 = None
         self._l1_dwell_start = None
         self._l2_dwell_start = None
+        self._l1_bright_peak = 0
+        self._l2_bright_peak = 0
         self._l1_bg = None
         self._l2_bg = None
 
@@ -532,6 +576,7 @@ class AreaConfig:
     min_line_pixels: int = 30  # per-area brightness pixel threshold
     use_bg_subtraction: bool = False  # relative-brightness mode for bright-sun environments
     bg_delta: int = 30        # pixels must be this many units above EMA baseline to count
+    dwell_spike_factor: float = 0.3   # re-arm threshold: spike must be > peak * (1 + factor)
 
 
 # ---------------------------------------------------------------------------
@@ -558,6 +603,7 @@ class AreaDetector:
             sequence_timeout=sequence_timeout,
             line_thickness=8,
             max_dwell_time=max_dwell_time,
+            dwell_spike_factor=cfg.dwell_spike_factor,
             csv_path=csv_path,
             use_bg_subtraction=cfg.use_bg_subtraction,
             bg_delta=cfg.bg_delta,
@@ -591,57 +637,116 @@ class AreaDetector:
 
 
 # ---------------------------------------------------------------------------
-# CountReconciler  (independent areas → median joined count)
+# QuorumReconciler  (sliding-window quorum → confirmed piece count)
 # ---------------------------------------------------------------------------
-class CountReconciler:
+class QuorumReconciler:
     """
-    Each area has its own independent running counter.
-    After every detection the joined count is recomputed as the median of all
-    area totals.  If all values are distinct the median is the middle value
-    (or average of the two middle values, rounded to int for even N).
+    Replaces the old median-based CountReconciler.
 
-    Divergence warning: logged when max(counts) - min(counts) > threshold.
+    A piece is confirmed only when at least `quorum` distinct areas fire
+    within a `piece_window_seconds` sliding window.  Near-simultaneous
+    triggers (< `min_inter_area_gap_seconds` apart) are treated as a single
+    false-positive event (e.g. a person walking through adjacent areas on
+    the same camera) and the duplicate is discarded.
+
+    Per-area running totals are still maintained for HUD display and
+    divergence logging.
+
+    YAML keys (under counting_areas):
+        piece_window_seconds: 5.0
+        min_inter_area_gap_seconds: 1.5
+        quorum: 2
     """
 
-    def __init__(self, n_areas: int, divergence_warn_threshold: int = 3):
+    def __init__(
+        self,
+        n_areas: int,
+        piece_window_seconds: float = 5.0,
+        min_inter_area_gap_seconds: float = 1.5,
+        quorum: int = 2,
+        divergence_warn_threshold: int = 3,
+    ):
         self.n_areas = n_areas
+        self.piece_window = piece_window_seconds
+        self.min_gap = min_inter_area_gap_seconds
+        self.quorum = quorum
         self.divergence_warn_threshold = divergence_warn_threshold
-        self.counts: List[int] = [0] * n_areas
-        self.joined_count: int = 0
-        self._last_joined: int = 0   # joined count at last Firebase push
 
-    def on_area_triggered(self, area_idx: int) -> Tuple[int, bool]:
+        self.counts: List[int] = [0] * n_areas
+        self.piece_count: int = 0           # authoritative confirmed-piece counter
+        self._last_piece_count: int = 0     # snapshot at last Firebase push
+
+        # Triggers accepted into the current window: List of (area_idx, timestamp)
+        self._pending_triggers: List[Tuple[int, float]] = []
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def on_area_triggered(self, area_idx: int, timestamp: float) -> Tuple[bool, bool]:
         """
-        Increment area_idx counter, recompute joined count.
-        Returns (joined_count, diverged).
-        diverged=True means max-min > divergence_warn_threshold.
+        Record a trigger from *area_idx* at *timestamp*.
+
+        Returns (confirmed_piece, diverged).
+          confirmed_piece – True when this trigger pushed the window to quorum.
+          diverged        – True when max(counts) - min(counts) > threshold.
         """
         self.counts[area_idx] += 1
-        self.joined_count = self._reconcile()
+
+        # Prune triggers older than the piece window
+        self._pending_triggers = [
+            (idx, ts) for (idx, ts) in self._pending_triggers
+            if timestamp - ts <= self.piece_window
+        ]
+
+        # Reject near-simultaneous trigger (different area fired < min_gap ago)
+        if self._pending_triggers:
+            last_ts = self._pending_triggers[-1][1]
+            if timestamp - last_ts < self.min_gap:
+                # Near-simultaneous – discard as false positive (person / debris)
+                diverged = (max(self.counts) - min(self.counts)) > self.divergence_warn_threshold
+                return False, diverged
+
+        # Accept this trigger into the window
+        self._pending_triggers.append((area_idx, timestamp))
+
+        # Count distinct areas that have fired in the window
+        areas_in_window = {idx for (idx, _) in self._pending_triggers}
+        confirmed_piece = len(areas_in_window) >= self.quorum
+
+        if confirmed_piece:
+            self.piece_count += 1
+            # Clear the window so the next piece starts fresh
+            self._pending_triggers = []
+
         diverged = (max(self.counts) - min(self.counts)) > self.divergence_warn_threshold
-        return self.joined_count, diverged
+        return confirmed_piece, diverged
 
-    def _reconcile(self) -> int:
-        """Return median of all area counts (integer)."""
-        return int(statistics.median(self.counts))
-
-    def joined_increased(self) -> bool:
-        """True if joined_count moved up since last call to this method."""
-        if self.joined_count > self._last_joined:
-            self._last_joined = self.joined_count
+    def piece_confirmed(self) -> bool:
+        """True if piece_count moved up since last call to this method."""
+        if self.piece_count > self._last_piece_count:
+            self._last_piece_count = self.piece_count
             return True
         return False
 
     def reset(self):
         self.counts = [0] * self.n_areas
-        self.joined_count = 0
-        self._last_joined = 0
+        self.piece_count = 0
+        self._last_piece_count = 0
+        self._pending_triggers = []
+
+    def pending_area_count(self) -> int:
+        """Number of distinct areas that have fired in the current open window."""
+        return len({idx for (idx, _) in self._pending_triggers})
 
     def status_text(self) -> str:
         parts = "  ".join(
             f"A{i+1}:{c}" for i, c in enumerate(self.counts)
         )
-        return f"joined={self.joined_count}  [{parts}]"
+        return (
+            f"pieces={self.piece_count}  [{parts}]  "
+            f"window={self.pending_area_count()}/{self.quorum}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +833,7 @@ def draw_area_hud(
     panel: np.ndarray,
     area_detectors: List[AreaDetector],
     focused_idx: int,
-    reconciler: CountReconciler,
+    reconciler: QuorumReconciler,
     flash: bool,
 ):
     """
@@ -757,10 +862,12 @@ def draw_area_hud(
 
     # Joined count (large)
     count_col = COL_COUNT if flash else (0, 255, 0)
-    cv2.putText(panel, f"COUNT: {reconciler.joined_count}", (bx + 6, 60),
+    cv2.putText(panel, f"COUNT: {reconciler.piece_count}", (bx + 6, 60),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, count_col, 2)
 
-    cv2.putText(panel, "(median of all areas)", (bx + 6, 74),
+    pending_n = reconciler.pending_area_count()
+    quorum_tag = f"window: {pending_n}/{reconciler.quorum} areas"
+    cv2.putText(panel, quorum_tag, (bx + 6, 74),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.30, (120, 160, 120), 1)
 
     # Separator
@@ -773,7 +880,7 @@ def draw_area_hud(
         y = 92 + i * 18
         area_color = AREA_COLORS[i % len(AREA_COLORS)]
         cnt = reconciler.counts[i]
-        matches = (cnt == reconciler.joined_count)
+        matches = (cnt == reconciler.piece_count)
         marker = "[*]" if matches else "[ ]"
         # Dimmed if not focused
         draw_color = tuple(min(255, c + 40) for c in area_color) if i == focused_idx else area_color
@@ -887,7 +994,9 @@ Mouse (--display mode):
 
 Counting:
   Each area counts independently (L1 → L2 per area).
-  Joined count = median of all area totals (recomputed after every detection).
+  A piece is confirmed when >= quorum distinct areas fire within piece_window_seconds.
+  Near-simultaneous triggers (< min_inter_area_gap_seconds) are rejected as false positives.
+  Dwell spike re-arm: if brightness surges 30%+ above peak during dwell, detector re-arms.
   Divergence warning logged when max(areas) - min(areas) > threshold.
 """)
 
@@ -912,6 +1021,9 @@ def run_mill_counter(
 
     ca_cfg = config.get("counting_areas", {})
     divergence_warn_threshold = int(ca_cfg.get("divergence_warn_threshold", 3))
+    piece_window_seconds      = float(ca_cfg.get("piece_window_seconds", 5.0))
+    min_inter_area_gap        = float(ca_cfg.get("min_inter_area_gap_seconds", 1.5))
+    quorum                    = int(ca_cfg.get("quorum", 2))
 
     # --- Build area detectors ---
     area_detectors = load_area_detectors(
@@ -926,8 +1038,11 @@ def run_mill_counter(
     logger.info(f"Loaded {n_areas} counting areas")
 
     # --- Reconciler ---
-    reconciler = CountReconciler(
+    reconciler = QuorumReconciler(
         n_areas=n_areas,
+        piece_window_seconds=piece_window_seconds,
+        min_inter_area_gap_seconds=min_inter_area_gap,
+        quorum=quorum,
         divergence_warn_threshold=divergence_warn_threshold,
     )
 
@@ -963,8 +1078,8 @@ def run_mill_counter(
                     # starts from the right baseline.
                     for i in range(n_areas):
                         reconciler.counts[i] = today_count
-                    reconciler.joined_count = today_count
-                    reconciler._last_joined = today_count
+                    reconciler.piece_count = today_count
+                    reconciler._last_piece_count = today_count
                     logger.info(f"Restored today's mill count: {today_count}")
             else:
                 logger.warning("Firebase init failed - offline mode")
@@ -1066,7 +1181,7 @@ def run_mill_counter(
                     continue
                 triggered = adet.update(frame, now)
                 if triggered:
-                    joined, diverged = reconciler.on_area_triggered(area_idx)
+                    confirmed, diverged = reconciler.on_area_triggered(area_idx, now)
                     logger.info(
                         f"Area '{adet.cfg.name}' triggered | "
                         f"area_count={reconciler.counts[area_idx]} | "
@@ -1082,12 +1197,12 @@ def run_mill_counter(
                             f"(max-min > {divergence_warn_threshold})"
                         )
 
-                    # Push to Firebase only when joined count increases
-                    if reconciler.joined_increased():
+                    # Push to Firebase only when a piece is confirmed by quorum
+                    if reconciler.piece_confirmed():
                         flash_until = now + FLASH_DUR
                         travel = adet.state.last_travel_time
                         logger.info(
-                            f"*** PIECE #{joined} COUNTED (joined) | "
+                            f"*** PIECE #{reconciler.piece_count} COUNTED (quorum) | "
                             f"travel={travel:.2f}s | areas={reconciler.counts} ***"
                         )
 
@@ -1348,7 +1463,7 @@ def run_mill_counter(
 
     daily_totals = session_manager.get_daily_totals()
     logger.info("=" * 50)
-    logger.info(f"FINAL COUNT (joined): {reconciler.joined_count} pieces")
+    logger.info(f"FINAL COUNT (quorum): {reconciler.piece_count} pieces")
     logger.info(f"Area counts: {reconciler.counts}")
     logger.info(f"Total run time: {daily_totals['total_run_minutes']:.1f} minutes")
     logger.info(f"Total break time: {daily_totals['total_break_minutes']:.1f} minutes")
@@ -1399,6 +1514,7 @@ def load_area_detectors(
             min_line_pixels=int(a.get("min_line_pixels", min_bright_pixels)),
             use_bg_subtraction=bool(a.get("use_bg_subtraction", False)),
             bg_delta=int(a.get("bg_delta", 30)),
+            dwell_spike_factor=float(a.get("dwell_spike_factor", 0.3)),
         )
 
         csv_path = (PROJECT_ROOT / "data" / "logs" /

@@ -7,7 +7,7 @@ AIS-CV counts hot steel pieces at the mill stand from a Dahua NVR using CAM-2 (c
 ```
 Dahua NVR (192.168.1.200)
 ├── Channel 2 (CAM-2) ──▶ AreaDetectors 1-3 ──┐
-└── Channel 3 (CAM-3) ──▶ AreaDetector 4   ──┴──▶ CountReconciler ──▶ Firebase (live)
+└── Channel 3 (CAM-3) ──▶ AreaDetector 4   ──┴──▶ QuorumReconciler ──▶ Firebase (live)
 ```
 
 ---
@@ -31,11 +31,11 @@ RTSP (channel 2) — shared across CAM-2 areas     RTSP (channel 3) — CAM-3 ar
        ├──▶ AreaDetector 2 (CAM-2)  → count_2++                            │
        └──▶ AreaDetector 3 (CAM-2)  → count_3++                            │ count_4++
                                      │                                       │
-                            CountReconciler ◀──────────────────────────────┘
-                     joined = int(statistics.median([count_1, count_2, count_3, count_4]))
-                     diverged = max-min > divergence_warn_threshold
+                            QuorumReconciler ◀─────────────────────────────┘
+              piece confirmed when ≥ quorum areas fire within piece_window_seconds
+              near-simultaneous triggers (< min_inter_area_gap_s) rejected as false positive
                                      │
-                             joined increased?
+                             piece_confirmed()?
                                      │ YES
                                 SessionManager.on_piece_counted()
                                      │
@@ -62,15 +62,15 @@ each `AreaConfig` stores `yaml_idx` — its original 0-based position in the YAM
 array before sorting. `save_area_positions(adet.cfg.yaml_idx, ...)` is called
 instead of the sorted list index.
 
-**Median reconciliation:** `CountReconciler` uses `statistics.median()` across all
-area counts after every detection. With 4 areas (3× CAM-2 + 1× CAM-3), a single
-runaway area (e.g. catching reflections, or CAM-3 lagging) cannot inflate the joined
-count beyond what the majority of areas agree on.
+**Quorum reconciliation:** `QuorumReconciler` confirms a piece only when `≥ quorum`
+distinct areas fire within a `piece_window_seconds` sliding window.  Replacing the
+old median approach eliminates false positives where a person walking through two
+adjacent CAM-2 zones triggered both nearly simultaneously and was counted as 2 pieces.
 
-**`joined_increased()`:** Firebase is only pushed when `joined_count >
-_last_joined`. This prevents duplicate pushes when the same piece triggers multiple
-areas in quick succession — the first trigger raises `joined_count` and pushes;
-subsequent triggers for the same piece leave `joined_count` unchanged.
+**`piece_confirmed()`:** Firebase is only pushed when `piece_count > _last_piece_count`.
+This prevents duplicate pushes when the same piece triggers multiple areas — the first
+trigger to complete the quorum confirms the piece; subsequent area fires for the same
+piece are absorbed into the next window (which clears on confirmation).
 
 ---
 
@@ -90,6 +90,9 @@ All CAM-2 detection and counting logic lives directly in this script (no separat
   while the line is **not** triggered (prevents steel from corrupting the model).
   Baseline is re-seeded if its shape changes (line moved during calibration).
 - Dwell suppression: continuous trigger `> max_dwell_time` is suppressed
+- **Dwell spike re-arm:** if bright-pixel count surges `> peak * (1 + dwell_spike_factor)`
+  during dwell suppression, the dwell timer resets and a new L1/L2 rising edge fires — handles
+  a second piece arriving while the previous piece is still on the line
 - Consecutive-frame confirmation before committing a line as "on"
 - L1 → L2 sequence must complete within `sequence_timeout`
 - Per-frame CSV logging to `data/logs/line_brightness_areaN.csv`
@@ -105,20 +108,26 @@ l2: LineSeg                   # exit line
 yaml_idx: int                 # original position in counting_areas.areas[] (pre-sort)
 use_bg_subtraction: bool      # use EMA background subtraction instead of absolute threshold
 bg_delta: int                 # brightness above baseline required to trigger (default 30)
+dwell_spike_factor: float     # re-arm threshold: spike > peak * (1+factor) restarts dwell (default 0.3)
 ```
 
 **`AreaDetector`** — wraps `TwoLineDetector` + `AreaConfig`:
 - `update(frame, timestamp)`: applies ROI mask then calls `det.update()`
 
-**`CountReconciler`**:
+**`QuorumReconciler`**:
 ```python
-counts: List[int]           # per-area running totals
-joined_count: int           # median of counts
-on_area_triggered(idx)      # → (joined_count, diverged)
-joined_increased()          # True once per upward move of joined_count
+counts: List[int]             # per-area running totals
+piece_count: int              # confirmed pieces (quorum-based)
+on_area_triggered(idx, ts)    # → (confirmed_piece, diverged)
+piece_confirmed()             # True once per upward move of piece_count
+pending_area_count()          # distinct areas fired in current open window
 reset()
-status_text()               # "joined=N  [A1:n  A2:n  A3:n]"
+status_text()                 # "pieces=N  [A1:n  A2:n ...]  window=k/Q"
 ```
+
+A piece is confirmed when `≥ quorum` distinct areas fire within `piece_window_seconds`.
+Near-simultaneous triggers (`< min_inter_area_gap_seconds` apart) are rejected as false
+positives — typically a person walking through two adjacent detection zones on CAM-2.
 
 **`StreamManager`** — one `cv2.VideoCapture` per unique RTSP URL; handles
 reconnection and frame buffering.
@@ -316,7 +325,7 @@ sessions/{id}        ← RUN/BREAK sessions (camera: 'CAM-2')
 |---------|---------|
 | `counting` | `PlateCounter` thresholds (legacy reference) |
 | `detection` | `break_threshold_seconds` used by `SessionManager` |
-| `counting_areas` | `run_mill_counter.py` — area configs for CAM-2 (3 areas, channel 2) and CAM-3 (1 area, channel 3): ROI, L1, L2, divergence threshold, `use_bg_subtraction`, `bg_delta` |
+| `counting_areas` | `run_mill_counter.py` — area configs for CAM-2 (3 areas, channel 2) and CAM-3 (1 area, channel 3): ROI, L1, L2, quorum settings, `use_bg_subtraction`, `bg_delta`, `dwell_spike_factor` |
 | `mill_stand` | `MillStandCounter` zone coordinates (offline use) |
 | `mill_stand_lines` | `MultiViewLineCounter` — legacy views, ROIs, lines, voting config |
 

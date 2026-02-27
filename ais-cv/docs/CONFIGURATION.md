@@ -45,11 +45,18 @@ AIS-CV supports three mill-stand counting configurations:
 #### `counting_areas` (production — `run_mill_counter.py`)
 
 Each area is fully independent: it has its own ROI, L1, L2, and running counter.
-The joined count pushed to Firebase is the median of all area totals.
+A piece is confirmed by a `QuorumReconciler` when at least `quorum` distinct areas
+fire within `piece_window_seconds`.  Near-simultaneous triggers from adjacent areas
+(e.g. a person walking through two CAM-2 zones) are rejected when they arrive less
+than `min_inter_area_gap_seconds` apart.
 
 ```yaml
 counting_areas:
-  divergence_warn_threshold: 3   # Warn when max(area counts) - min(area counts) > N
+  # Quorum reconciler
+  piece_window_seconds: 5.0          # Sliding window — areas must fire within this duration
+  min_inter_area_gap_seconds: 1.5    # Reject trigger if previous area fired < this many seconds ago
+  quorum: 2                          # Distinct areas needed to confirm a piece
+  divergence_warn_threshold: 3       # Log warning when max(counts)-min(counts) exceeds this
   areas:
     - name: Area 1
       order: 1                   # Sort order for display; does not affect YAML index
@@ -72,6 +79,11 @@ counting_areas:
                                  # (EMA baseline + bg_delta). Active only when
                                  # use_bg_subtraction: true.
                                  # Raise to reduce false positives; lower if missing pieces.
+      dwell_spike_factor: 0.3    # Spike re-arm: if bright-pixel count exceeds
+                                 # peak * (1 + factor) during dwell suppression,
+                                 # the dwell timer resets so a new piece can be detected.
+                                 # Default 0.3 = 30% above peak. Lower = more sensitive
+                                 # re-arm; raise if spurious re-arms occur.
 
     - name: Area 2
       order: 2
@@ -97,6 +109,11 @@ counting_areas:
   The baseline warms up over ~20 seconds on startup.
 - `bg_delta` controls how much above the local background a pixel must be to count
   as "bright". Default 30. Tune per-area; the YAML value overrides `--bg-delta`.
+- `dwell_spike_factor` enables spike re-arm during dwell suppression. If the
+  bright-pixel count on a dwelled line jumps more than `factor * 100`% above the
+  peak seen during that dwell, the dwell timer resets and a new L1/L2 crossing can
+  fire. This handles the case where a previous piece is still on the line when the
+  next piece arrives. Default `0.3` (30%). Set per-area; omit to use the default.
 - Calibrate interactively: `python scripts/run_mill_counter.py --display --no-firebase`
 - See [Calibration Guide](CALIBRATION.md#cam-2-mill-stand-calibration-run_mill_counterpy)
   for step-by-step instructions.
