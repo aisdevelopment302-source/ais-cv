@@ -1,0 +1,17 @@
+[Unit]
+Description=AIS Photo API Server
+Documentation=https://github.com/your-repo/ais
+After=network.target
+
+[Service]
+Type=simple
+User=adityajain
+Group=adityajain
+WorkingDirectory=/home/adityajain/AIS/ais-cv
+Environment=PATH=/home/adityajain/AIS/ais-cv/venv/bin:/usr/bin:/bin
+ExecStart=/home/adityajain/AIS/ais-cv/venv/bin/python scripts/photo_server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

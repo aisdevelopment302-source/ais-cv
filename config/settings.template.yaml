@@ -1,0 +1,139 @@
+# AIS CV Configuration Template
+# Copy this to settings.yaml and fill in your values
+# DO NOT commit settings.yaml - it contains credentials!
+
+# Detection Settings
+detection:
+  # Luminosity (0-255) - hot steel glows bright
+  luminosity_threshold: 180
+  luminosity_min_pixels: 1000  # Minimum bright pixels to count as "hot stock"
+  
+  # Motion detection
+  motion_threshold: 25         # Pixel difference threshold
+  motion_min_area: 500         # Minimum changed area
+  
+  # State timing
+  break_threshold_seconds: 120  # 2 minutes without stock = BREAK
+  min_run_duration_seconds: 10  # Ignore very brief detections
+  
+  # Processing
+  process_fps: 1               # Analyze 1 frame per second (sufficient)
+
+# Photo Capture
+photos:
+  output_dir: "data/photos"
+  on_state_change: true
+  periodic_interval_seconds: 300  # Every 5 minutes during states
+  
+# Logging
+logging:
+  output_dir: "data/logs"
+  level: "INFO"
+  rotation: "daily"
+
+# Multi-view mill stand line counter
+mill_stand_lines:
+  enabled: false
+  views:
+  - name: "View 1"
+    camera:
+      rtsp_url: "rtsp://USER:PASSWORD@NVR_IP:554/cam/realmonitor?channel=2&subtype=1"
+      resolution: [1920, 1080]
+      fps: 25
+    roi:
+      start: [0, 0]
+      end: [1920, 1080]
+    line1:
+      start: [0, 0]
+      end: [0, 0]
+    line2:
+      start: [0, 0]
+      end: [0, 0]
+  - name: "View 2"
+    camera:
+      rtsp_url: "rtsp://USER:PASSWORD@NVR_IP:554/cam/realmonitor?channel=3&subtype=1"
+      resolution: [1920, 1080]
+      fps: 25
+    roi:
+      start: [0, 0]
+      end: [1920, 1080]
+    line1:
+      start: [0, 0]
+      end: [0, 0]
+    line2:
+      start: [0, 0]
+      end: [0, 0]
+  - name: "View 3"
+    camera:
+      rtsp_url: "rtsp://USER:PASSWORD@NVR_IP:554/cam/realmonitor?channel=4&subtype=1"
+      resolution: [1920, 1080]
+      fps: 25
+    roi:
+      start: [0, 0]
+      end: [1920, 1080]
+    line1:
+      start: [0, 0]
+      end: [0, 0]
+    line2:
+      start: [0, 0]
+      end: [0, 0]
+  voting:
+    window_seconds: 5.0
+    min_stands_required: null
+  counting:
+    luminosity_threshold: 160
+    min_bright_pixels: 100
+    sequence_timeout: 3.0
+    min_travel_time: 0.0
+    min_consecutive_frames: 2
+    line_thickness: 10
+    hot_metal_filter_enabled: true
+    min_saturation: 20
+    min_red_dominance: 1.1
+    min_warmth_ratio: 1.05
+    target_resolution: [704, 576]
+
+# Multi-area independent piece counter (run_mill_counter.py)
+counting_areas:
+  # Quorum reconciler settings
+  # A piece is confirmed only when >= quorum distinct areas fire within piece_window_seconds.
+  # Near-simultaneous triggers (< min_inter_area_gap_seconds apart) are rejected as
+  # false positives (e.g. person walking through two adjacent detection zones).
+  piece_window_seconds: 5.0          # Sliding window duration for quorum collection
+  min_inter_area_gap_seconds: 1.5    # Minimum gap between accepted area triggers
+  quorum: 2                          # Minimum distinct areas needed to confirm a piece
+  divergence_warn_threshold: 3       # Log warning when max(counts)-min(counts) exceeds this
+
+  areas:
+  - name: "Area 1"
+    order: 1
+    camera_rtsp: "rtsp://USER:PASSWORD@NVR_IP:554/cam/realmonitor?channel=2&subtype=1"
+    roi:
+      start: [0, 0]
+      end: [100, 100]
+    line1:
+      start: [0, 50]
+      end: [100, 50]
+    line2:
+      start: [0, 75]
+      end: [100, 75]
+    min_line_pixels: 20              # Bright pixels needed to trigger a line
+    use_bg_subtraction: false        # Enable relative-brightness mode for bright sunlight
+    bg_delta: 30                     # EMA delta for background subtraction
+    dwell_spike_factor: 0.3          # Spike re-arm threshold (30% above dwell peak = new piece)
+  - name: "CAM3 Area 1"
+    order: 4
+    camera_rtsp: "rtsp://USER:PASSWORD@NVR_IP:554/cam/realmonitor?channel=3&subtype=1"
+    roi:
+      start: [0, 0]
+      end: [100, 100]
+    line1:
+      start: [0, 50]
+      end: [100, 50]
+    line2:
+      start: [0, 75]
+      end: [100, 75]
+    min_line_pixels: 20
+    use_bg_subtraction: false
+    bg_delta: 30
+    dwell_spike_factor: 0.3
